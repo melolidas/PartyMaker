@@ -1,0 +1,26 @@
+{
+  "name": "PartyMaker",
+  "install": "npm ci",
+  "terminals": [
+    {
+      "name": "api",
+      "command": "npm run dev:api",
+      "description": "PartyMaker Express + SQLite API on http://localhost:4000"
+    },
+    {
+      "name": "web",
+      "command": "npm run dev:web",
+      "description": "PartyMaker Vite dev server (UI) on http://localhost:5173, proxies /api to the API"
+    }
+  ],
+  "ports": [
+    {
+      "name": "web",
+      "port": 5173
+    },
+    {
+      "name": "api",
+      "port": 4000
+    }
+  ]
+}

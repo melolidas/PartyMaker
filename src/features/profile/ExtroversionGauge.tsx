@@ -1,5 +1,5 @@
 import { Platform, StyleSheet, View } from 'react-native';
-import Svg, { Circle, Defs, G, LinearGradient, Path, Stop } from 'react-native-svg';
+import Svg, { Defs, G, LinearGradient, Path, Stop } from 'react-native-svg';
 import { getExtroversionVisual } from './extroversion';
 
 type Props = {
@@ -63,24 +63,31 @@ export function ExtroversionGauge({ level, size = 96, accessibilityLabel, testID
         />
         <G rotation={visual.needleRotation} origin="60, 60">
           <Path
-            d="M 60 60 L 60 35"
+            d="M 53.5 30 L 60 36.5 L 66.5 30"
             fill="none"
-            stroke={visual.color}
-            strokeOpacity={0.25}
-            strokeWidth={15}
+            stroke="#07090A"
+            strokeOpacity={0.78}
+            strokeWidth={11}
             strokeLinecap="round"
+            strokeLinejoin="round"
           />
           <Path
-            d="M 60 60 L 60 35"
+            d="M 53.5 30 L 60 36.5 L 66.5 30"
             fill="none"
             stroke={`url(#${gradientId})`}
-            strokeWidth={10}
+            strokeWidth={5.5}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+          <Path
+            d="M 54.5 29.7 L 60 35.2"
+            fill="none"
+            stroke={visual.highlight}
+            strokeOpacity={0.48}
+            strokeWidth={1.4}
             strokeLinecap="round"
           />
         </G>
-        <Circle cx={60} cy={60} r={14} fill={visual.color} opacity={0.24} />
-        <Circle cx={60} cy={60} r={10.5} fill={`url(#${gradientId})`} />
-        <Circle cx={57} cy={57} r={2.2} fill={visual.highlight} opacity={0.42} />
       </Svg>
     </View>
   );

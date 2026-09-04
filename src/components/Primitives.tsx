@@ -14,23 +14,42 @@ import { colors, radius } from '../theme';
 
 type PillProps = {
   children: ReactNode;
+  icon?: ReactNode;
   active?: boolean;
   onPress?: () => void;
 };
 
-export function Pill({ children, active = false, onPress }: PillProps) {
+export function Pill({ children, icon, active = false, onPress }: PillProps) {
   return (
     <Pressable onPress={onPress} style={[styles.pill, active && styles.pillActive]}>
+      {icon}
       <Text style={[styles.pillText, active && styles.pillTextActive]}>{children}</Text>
     </Pressable>
   );
 }
 
-export function SectionHeader({ title, action }: { title: string; action?: string }) {
+export function SectionHeader({ title, action, onActionPress, actionAccessibilityLabel, actionTestID, style }: {
+  title: string;
+  action?: string;
+  onActionPress?: () => void;
+  actionAccessibilityLabel?: string;
+  actionTestID?: string;
+  style?: StyleProp<ViewStyle>;
+}) {
   return (
-    <View style={styles.sectionHeader}>
-      <Text style={styles.sectionTitle}>{title}</Text>
-      {action ? <Text style={styles.sectionAction}>{action}</Text> : null}
+    <View style={[styles.sectionHeader, style]}>
+      <Text accessibilityRole="header" style={styles.sectionTitle}>{title}</Text>
+      {action ? onActionPress ? (
+        <Pressable
+          testID={actionTestID}
+          accessibilityRole="button"
+          accessibilityLabel={actionAccessibilityLabel ?? action}
+          onPress={onActionPress}
+          style={({ pressed }) => [styles.sectionActionButton, pressed && styles.sectionActionPressed]}
+        >
+          <Text style={styles.sectionAction}>{action}</Text>
+        </Pressable>
+      ) : <Text style={styles.sectionAction}>{action}</Text> : null}
     </View>
   );
 }
@@ -55,17 +74,19 @@ export function Avatar({ image, label = 'K', size = 38 }: AvatarProps) {
 
 export function IconButton({
   name,
+  accessibilityLabel,
   onPress,
   size = 20,
   style,
 }: {
   name: React.ComponentProps<typeof Feather>['name'];
+  accessibilityLabel: string;
   onPress?: () => void;
   size?: number;
   style?: StyleProp<ViewStyle>;
 }) {
   return (
-    <Pressable onPress={onPress} style={[styles.iconButton, style]}>
+    <Pressable accessibilityRole="button" accessibilityLabel={accessibilityLabel} onPress={onPress} style={[styles.iconButton, style]}>
       <Feather name={name} size={size} color={colors.text} />
     </Pressable>
   );
@@ -77,6 +98,8 @@ export function Divider() {
 
 const styles = StyleSheet.create({
   pill: {
+    flexDirection: 'row',
+    gap: 7,
     minHeight: 34,
     paddingHorizontal: 13,
     borderRadius: radius.pill,
@@ -104,18 +127,27 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+    gap: 12,
     marginTop: 24,
     marginBottom: 13,
   },
   sectionTitle: {
+    flex: 1,
     color: colors.text,
-    fontSize: 15,
+    fontSize: 20,
+    lineHeight: 26,
     fontWeight: '700',
   },
   sectionAction: {
     color: colors.text,
     fontSize: 13,
   },
+  sectionActionButton: {
+    minHeight: 44,
+    justifyContent: 'center',
+    paddingLeft: 8,
+  },
+  sectionActionPressed: { opacity: 0.65 },
   avatarFallback: {
     backgroundColor: '#2B3033',
     borderWidth: 1,

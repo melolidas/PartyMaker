@@ -1,6 +1,10 @@
 import { useCallback, useMemo, useState } from 'react';
-import { StyleSheet, View } from 'react-native';
+import { Platform, StyleSheet, View } from 'react-native';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { BottomNav } from './src/components/BottomNav';
+import { LocalizationProvider } from './src/i18n/LocalizationProvider';
+import { HomeExperienceProvider } from './src/features/home/HomeExperienceProvider';
+import { MockChatProvider } from './src/features/chats/MockChatProvider';
 import { NavScrollContext } from './src/navigation/NavScrollContext';
 import { ActivityScreen } from './src/screens/ActivityScreen';
 import { CreateLobbyScreen } from './src/screens/CreateLobbyScreen';
@@ -11,6 +15,20 @@ import { colors } from './src/theme';
 import { RouteName } from './src/types';
 
 export default function App() {
+  return (
+    <GestureHandlerRootView style={styles.screen}>
+      <LocalizationProvider>
+        <HomeExperienceProvider>
+          <MockChatProvider>
+            <PartyMaker />
+          </MockChatProvider>
+        </HomeExperienceProvider>
+      </LocalizationProvider>
+    </GestureHandlerRootView>
+  );
+}
+
+function PartyMaker() {
   const [route, setRoute] = useState<RouteName>('home');
   const [previousRoute, setPreviousRoute] = useState<RouteName>('home');
   const [navCompact, setNavCompact] = useState(false);
@@ -59,6 +77,10 @@ const styles = StyleSheet.create({
   },
   app: {
     flex: 1,
+    ...Platform.select({
+      web: {},
+      default: { direction: 'ltr' as const },
+    }),
     backgroundColor: colors.background,
   },
 });

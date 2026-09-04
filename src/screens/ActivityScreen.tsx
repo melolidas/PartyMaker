@@ -3,62 +3,65 @@ import { Feather } from '@expo/vector-icons';
 import { photos } from '../assets';
 import { Avatar } from '../components/Primitives';
 import { Screen } from '../components/Screen';
+import { useI18n } from '../i18n/LocalizationProvider';
+import { TranslationKey } from '../i18n/translations';
 import { colors } from '../theme';
 
 type Notification = {
   user: string;
-  text: string;
-  context: string;
-  time: string;
+  text: TranslationKey;
+  context: TranslationKey;
+  time: TranslationKey;
   image?: keyof typeof photos;
   dot?: boolean;
 };
 
-const groups: { title: string; items: Notification[] }[] = [
+const groups: { title: TranslationKey; items: Notification[] }[] = [
   {
-    title: 'New',
+    title: 'activity.new',
     items: [
-      { user: 'alex', text: 'joined your lobby', context: 'Beer tonight', time: '2m', dot: true },
+      { user: 'alex', text: 'activity.joinedMale', context: 'demo.beer', time: 'time.2m', dot: true },
       {
         user: 'marina',
-        text: 'commented on your moment',
-        context: 'Pizza & chill',
-        time: '15m',
+        text: 'activity.commentedFemale',
+        context: 'demo.pizza',
+        time: 'time.15m',
         image: 'party',
       },
-      { user: 'dan', text: 'liked your moment', context: 'Pizza & chill', time: '23m', image: 'party' },
-      { user: 'john', text: 'invited you to join', context: 'CS2 squad', time: '35m', image: 'cinema' },
+      { user: 'dan', text: 'activity.likedMale', context: 'demo.pizza', time: 'time.23m', image: 'party' },
+      { user: 'john', text: 'activity.invited', context: 'demo.cs2', time: 'time.35m', image: 'cinema' },
     ],
   },
   {
-    title: 'Today',
+    title: 'common.today',
     items: [
-      { user: 'kate', text: 'joined your lobby', context: 'Basketball', time: '1h' },
+      { user: 'kate', text: 'activity.joinedFemale', context: 'demo.basketball', time: 'time.1h' },
       {
         user: 'tim',
-        text: 'commented on your moment',
-        context: 'Hiking mountains',
-        time: '2h',
+        text: 'activity.commentedMale',
+        context: 'demo.hikingMountains',
+        time: 'time.2h',
         image: 'hiking',
       },
-      { user: 'anna', text: 'liked your moment', context: 'Hiking mountains', time: '3h', image: 'hiking' },
+      { user: 'anna', text: 'activity.likedFemale', context: 'demo.hikingMountains', time: 'time.3h', image: 'hiking' },
     ],
   },
   {
-    title: 'Yesterday',
+    title: 'common.yesterday',
     items: [
-      { user: 'max', text: 'joined your lobby', context: 'Cinema night', time: 'Yesterday' },
+      { user: 'max', text: 'activity.joinedMale', context: 'demo.cinema', time: 'common.yesterday' },
     ],
   },
 ];
 
 export function ActivityScreen() {
+  const { t } = useI18n();
   return (
     <Screen>
-      <Text style={styles.title}>Activity</Text>
+      <Text style={styles.title}>{t('nav.activity')}</Text>
       {groups.map((group) => (
         <View key={group.title} style={styles.group}>
-          <Text style={styles.groupTitle}>{group.title}</Text>
+          <Text style={styles.groupTitle}>{t(group.title)}</Text>
           <View style={styles.groupLine} />
           {group.items.map((item) => (
             <NotificationRow key={`${item.user}-${item.time}`} item={item} />
@@ -70,6 +73,7 @@ export function ActivityScreen() {
 }
 
 function NotificationRow({ item }: { item: Notification }) {
+  const { t } = useI18n();
   return (
     <View style={styles.row}>
       <View>
@@ -78,11 +82,11 @@ function NotificationRow({ item }: { item: Notification }) {
       </View>
       <View style={styles.rowBody}>
         <Text style={styles.message}>
-          <Text style={styles.user}>{item.user}</Text> {item.text}
+          <Text style={styles.user}>{item.user}</Text> {t(item.text)}
         </Text>
         <View style={styles.contextRow}>
-          <Text style={styles.context}>{item.context}</Text>
-          <Text style={styles.time}>{item.time}</Text>
+          <Text style={styles.context}>{t(item.context)}</Text>
+          <Text style={styles.time}>{t(item.time)}</Text>
         </View>
       </View>
       {item.image ? (
@@ -136,6 +140,7 @@ const styles = StyleSheet.create({
   },
   rowBody: {
     flex: 1,
+    paddingVertical: 10,
     gap: 5,
   },
   message: {
@@ -148,6 +153,7 @@ const styles = StyleSheet.create({
   },
   contextRow: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     gap: 8,
   },
   context: {

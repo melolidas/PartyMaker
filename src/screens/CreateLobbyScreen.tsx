@@ -3,75 +3,81 @@ import { Feather } from '@expo/vector-icons';
 import { photos } from '../assets';
 import { IconButton } from '../components/Primitives';
 import { Screen } from '../components/Screen';
+import { useI18n } from '../i18n/LocalizationProvider';
 import { colors, radius } from '../theme';
 
 type IconName = React.ComponentProps<typeof Feather>['name'];
 
 export function CreateLobbyScreen({ onClose }: { onClose: () => void }) {
+  const { t } = useI18n();
+  const title = t('demo.beer');
+  const description = t('demo.lobbyDescription');
   return (
     <Screen contentContainerStyle={styles.content}>
       <View style={styles.header}>
-        <IconButton name="x" onPress={onClose} />
-        <Text style={styles.headerTitle}>Create Lobby</Text>
+        <IconButton name="x" accessibilityLabel={t('a11y.close')} onPress={onClose} />
+        <Text style={styles.headerTitle}>{t('nav.create')}</Text>
         <View style={styles.headerSpacer} />
       </View>
 
       <View style={styles.photoRow}>
-        <Image source={photos.party} style={styles.selectedPhoto} />
+        <View style={styles.selectedPhoto}>
+          <Image source={photos.party} style={styles.photoImage} />
+        </View>
         <Pressable style={styles.addPhoto}>
           <Feather name="camera" size={25} color={colors.text} />
-          <Text style={styles.addPhotoText}>Add photo</Text>
+          <Text style={styles.addPhotoText}>{t('create.addPhoto')}</Text>
         </Pressable>
       </View>
 
       <View style={styles.inputCard}>
-        <Text style={styles.label}>Title</Text>
+        <Text style={styles.label}>{t('create.title')}</Text>
         <View style={styles.inlineValue}>
-          <Text style={styles.value}>Beer tonight 🍺</Text>
-          <Text style={styles.counter}>14/40</Text>
+          <Text style={[styles.value, styles.titleValue]}>{title}</Text>
+          <Text style={styles.counter}>{Array.from(title).length}/40</Text>
         </View>
       </View>
 
       <View style={[styles.inputCard, styles.descriptionCard]}>
-        <Text style={styles.label}>Description</Text>
-        <Text style={styles.value}>Let's chill, have some beers and{`\n`}good conversations.</Text>
-        <Text style={styles.counterBottom}>50/200</Text>
+        <Text style={styles.label}>{t('create.description')}</Text>
+        <Text style={styles.value}>{description}</Text>
+        <Text style={styles.counterBottom}>{Array.from(description).length}/200</Text>
       </View>
 
       <View style={styles.inputCard}>
-        <Text style={styles.label}>Category</Text>
-        <FieldRow icon="tag" text="🍺 Drinks" />
+        <Text style={styles.label}>{t('create.category')}</Text>
+        <FieldRow text={t('category.drinks')} />
       </View>
 
       <View style={styles.groupCard}>
-        <FieldRow icon="map-pin" text="Bar Campus" hint="Location" />
+        <FieldRow icon="map-pin" text="Bar Campus" hint={t('create.location')} />
         <View style={styles.groupDivider} />
-        <FieldRow icon="calendar" text="Today, Aug 25" />
+        <FieldRow icon="calendar" text={t('demo.todayAug25')} />
         <View style={styles.groupDivider} />
-        <FieldRow icon="clock" text="Time" muted />
+        <FieldRow icon="clock" text={t('create.time')} muted />
       </View>
 
       <View style={styles.peopleCard}>
         <View style={styles.peopleTop}>
           <View style={styles.peopleLabel}>
             <Feather name="users" size={17} color={colors.muted} />
-            <Text style={styles.peopleText}>Max people</Text>
+            <Text style={styles.peopleText}>{t('create.maxPeople')}</Text>
           </View>
           <View style={styles.counterControl}>
-            <Pressable style={styles.circleButton}>
+            <Pressable style={styles.circleButton} accessibilityRole="button" accessibilityLabel={t('a11y.fewerPeople')}>
               <Feather name="minus" size={17} color={colors.text} />
             </Pressable>
             <Text style={styles.count}>6</Text>
-            <Pressable style={styles.circleButton}>
+            <Pressable style={styles.circleButton} accessibilityRole="button" accessibilityLabel={t('a11y.morePeople')}>
               <Feather name="plus" size={17} color={colors.text} />
             </Pressable>
           </View>
         </View>
-        <Text style={styles.minimum}>2 people minimum</Text>
+        <Text style={styles.minimum}>{t('create.minimum')}</Text>
       </View>
 
       <Pressable style={styles.primaryButton}>
-        <Text style={styles.primaryText}>Create Lobby</Text>
+        <Text style={styles.primaryText}>{t('nav.create')}</Text>
       </Pressable>
     </Screen>
   );
@@ -83,14 +89,14 @@ function FieldRow({
   hint,
   muted,
 }: {
-  icon: IconName;
+  icon?: IconName;
   text: string;
   hint?: string;
   muted?: boolean;
 }) {
   return (
     <View style={styles.fieldRow}>
-      <Feather name={icon} size={17} color={colors.muted} />
+      {icon ? <Feather name={icon} size={17} color={colors.muted} /> : null}
       <View style={styles.fieldTextWrap}>
         {hint ? <Text style={styles.fieldHint}>{hint}</Text> : null}
         <Text style={[styles.fieldText, muted && styles.mutedText]}>{text}</Text>
@@ -129,6 +135,11 @@ const styles = StyleSheet.create({
     flex: 1.35,
     height: '100%',
     borderRadius: radius.medium,
+    overflow: 'hidden',
+  },
+  photoImage: {
+    width: '100%',
+    height: '100%',
   },
   addPhoto: {
     flex: 1,
@@ -155,6 +166,7 @@ const styles = StyleSheet.create({
   },
   descriptionCard: {
     minHeight: 104,
+    paddingBottom: 30,
   },
   label: {
     color: colors.muted,
@@ -165,6 +177,10 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+    gap: 12,
+  },
+  titleValue: {
+    flex: 1,
   },
   value: {
     color: colors.text,
@@ -230,11 +246,14 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
   },
   peopleLabel: {
+    flex: 1,
+    marginRight: 12,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
   },
   peopleText: {
+    flexShrink: 1,
     color: colors.muted,
     fontSize: 13,
   },

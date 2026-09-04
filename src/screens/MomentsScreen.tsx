@@ -3,38 +3,43 @@ import { Feather } from '@expo/vector-icons';
 import { photos } from '../assets';
 import { Avatar, Divider, IconButton } from '../components/Primitives';
 import { Screen } from '../components/Screen';
+import { PartyIcon, PartyIconName } from '../components/icons/PartyIcon';
+import { useI18n } from '../i18n/LocalizationProvider';
 import { colors, radius } from '../theme';
 
 export function MomentsScreen() {
+  const { t } = useI18n();
   return (
     <Screen>
       <View style={styles.header}>
-        <Text style={styles.title}>Moments</Text>
-        <IconButton name="share" style={styles.shareButton} />
+        <Text style={styles.title}>{t('nav.moments')}</Text>
+        <IconButton name="share" accessibilityLabel={t('a11y.share')} style={styles.shareButton} />
       </View>
       <View style={styles.tabs}>
         <Pressable style={[styles.tab, styles.tabActive]}>
-          <Text style={styles.tabTextActive}>For you</Text>
+          <Text style={styles.tabTextActive}>{t('moments.forYou')}</Text>
         </Pressable>
         <Pressable style={styles.tab}>
-          <Text style={styles.tabText}>Following</Text>
+          <Text style={styles.tabText}>{t('moments.following')}</Text>
         </Pressable>
       </View>
       <Divider />
 
       <MomentCard
         author="alex"
-        label="Pizza & chill  ·  Aug 24"
+        label={`${t('demo.pizza')}  ·  ${t('demo.aug24')}`}
         image={photos.party}
-        caption="Had an amazing time! Great people, good pizza and even better vibes ✌️"
+        caption={t('demo.partyCaption')}
+        captionIcons={['sparkles']}
         likes="24"
         comments="7"
       />
       <MomentCard
         author="marina"
-        label="Hiking mountains  ·  Aug 23"
+        label={`${t('demo.hikingMountains')}  ·  ${t('demo.aug23')}`}
         image={photos.hiking}
-        caption="Weekend well spent ⛰️🤍"
+        caption={t('demo.hikeCaption')}
+        captionIcons={['heart']}
         likes="32"
         comments="5"
       />
@@ -47,6 +52,7 @@ function MomentCard({
   label,
   image,
   caption,
+  captionIcons,
   likes,
   comments,
 }: {
@@ -54,6 +60,7 @@ function MomentCard({
   label: string;
   image: ImageSourcePropType;
   caption: string;
+  captionIcons: PartyIconName[];
   likes: string;
   comments: string;
 }) {
@@ -68,7 +75,12 @@ function MomentCard({
         <Feather name="more-horizontal" size={20} color={colors.muted} />
       </View>
       <Image source={image} style={styles.photo} />
-      <Text style={styles.caption}>{caption}</Text>
+      <View style={styles.captionRow}>
+        <Text style={styles.caption}>{caption}</Text>
+        <View style={styles.captionIcons}>
+          {captionIcons.map((name) => <PartyIcon key={name} name={name} size={16} />)}
+        </View>
+      </View>
       <View style={styles.actions}>
         <View style={styles.actionLeft}>
           <Action icon="heart" value={likes} />
@@ -160,11 +172,22 @@ const styles = StyleSheet.create({
     borderRadius: radius.medium,
     backgroundColor: colors.surface,
   },
+  captionRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    gap: 7,
+    marginTop: 12,
+  },
+  captionIcons: {
+    flexDirection: 'row',
+    gap: 4,
+    paddingBottom: 2,
+  },
   caption: {
+    flexShrink: 1,
     color: colors.text,
     fontSize: 13,
     lineHeight: 19,
-    marginTop: 12,
   },
   actions: {
     flexDirection: 'row',

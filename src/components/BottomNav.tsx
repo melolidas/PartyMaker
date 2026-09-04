@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
-import { AccessibilityInfo, Animated, Platform, Pressable, StyleSheet, View } from 'react-native';
+import { AccessibilityInfo, Animated, Image, Platform, Pressable, StyleSheet, View } from 'react-native';
 import { Feather, Ionicons } from '@expo/vector-icons';
+import { photos } from '../assets';
+import { useI18n } from '../i18n/LocalizationProvider';
+import { TranslationKey } from '../i18n/translations';
 import { useNavPulse } from '../navigation/useNavPulse';
 import { easeNavMotion, getNavScrollAnimation, navLayout, navMotion } from '../navigation/navMotion';
 import { colors } from '../theme';
@@ -11,7 +14,7 @@ import { NavActiveIndicator } from './NavActiveIndicator';
 
 type NavItem = {
   route: RouteName;
-  label: string;
+  label: TranslationKey;
   icon: React.ComponentProps<typeof Feather>['name'];
 };
 
@@ -22,11 +25,11 @@ type Props = {
 };
 
 const items: NavItem[] = [
-  { route: 'home', label: 'Home', icon: 'home' },
-  { route: 'moments', label: 'Moments', icon: 'image' },
-  { route: 'create', label: 'Create lobby', icon: 'plus' },
-  { route: 'activity', label: 'Activity', icon: 'bell' },
-  { route: 'profile', label: 'Profile', icon: 'user' },
+  { route: 'home', label: 'nav.home', icon: 'home' },
+  { route: 'moments', label: 'nav.moments', icon: 'image' },
+  { route: 'create', label: 'nav.create', icon: 'plus' },
+  { route: 'activity', label: 'nav.activity', icon: 'bell' },
+  { route: 'profile', label: 'nav.profile', icon: 'user' },
 ];
 
 export function BottomNav({ active, compact, onChange }: Props) {
@@ -153,13 +156,14 @@ function NavButton({
   selected: boolean;
   onChange: Props['onChange'];
 }) {
+  const { t } = useI18n();
   const create = item.route === 'create';
   const iconColor = create ? colors.black : selected ? colors.white : '#B8BFC6';
 
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={item.label}
+      accessibilityLabel={t(item.label)}
       accessibilityState={{ selected }}
       onPress={() => onChange(item.route)}
       style={styles.item}
@@ -171,8 +175,16 @@ function NavButton({
           create && styles.createButton,
         ]}
       >
-        {item.route === 'moments' ? (
-          <Ionicons name="images-outline" size={27} color={iconColor} />
+        {item.route === 'home' ? (
+          <Ionicons name={selected ? 'home' : 'home-outline'} size={26} color={iconColor} />
+        ) : item.route === 'moments' ? (
+          <Ionicons name={selected ? 'images' : 'images-outline'} size={27} color={iconColor} />
+        ) : item.route === 'activity' ? (
+          <Ionicons name={selected ? 'notifications' : 'notifications-outline'} size={26} color={iconColor} />
+        ) : item.route === 'profile' ? (
+          <View style={[styles.avatarFrame, selected && styles.avatarFrameSelected]}>
+            <Image source={photos.party} style={[styles.avatar, !selected && styles.avatarMuted]} />
+          </View>
         ) : (
           <Feather name={item.icon} size={create ? 30 : 27} color={iconColor} />
         )}
@@ -238,5 +250,34 @@ const styles = StyleSheet.create({
     backgroundColor: '#F1F3F5',
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.7)',
+  },
+  avatarFrame: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    padding: 2,
+    borderWidth: 1,
+    borderColor: 'rgba(184,191,198,0.36)',
+  },
+  avatarFrameSelected: {
+    borderColor: colors.white,
+    backgroundColor: 'rgba(255,255,255,0.16)',
+    ...Platform.select({
+      web: { boxShadow: '0 0 12px rgba(255,255,255,0.32)' },
+      default: {
+        shadowColor: colors.white,
+        shadowOpacity: 0.3,
+        shadowRadius: 7,
+        elevation: 3,
+      },
+    }),
+  },
+  avatar: {
+    width: '100%',
+    height: '100%',
+    borderRadius: 14,
+  },
+  avatarMuted: {
+    opacity: 0.7,
   },
 });

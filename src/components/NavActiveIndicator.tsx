@@ -48,8 +48,6 @@ const styles = StyleSheet.create({
     top: 6,
     height: navLayout.indicatorHeight,
     borderRadius: navLayout.indicatorHeight / 2,
-    backgroundColor: 'rgba(255,255,255,0.11)',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.14)',
+    backgroundColor: '#383C3F',
   },
 });

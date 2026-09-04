@@ -1,5 +1,5 @@
 import { Platform, StyleSheet, View } from 'react-native';
-import Svg, { Defs, G, LinearGradient, Path, Stop } from 'react-native-svg';
+import Svg, { Circle, Defs, G, LinearGradient, Path, Stop } from 'react-native-svg';
 import { getExtroversionVisual } from './extroversion';
 
 type Props = {
@@ -63,31 +63,41 @@ export function ExtroversionGauge({ level, size = 96, accessibilityLabel, testID
         />
         <G rotation={visual.needleRotation} origin="60, 60">
           <Path
-            d="M 53.5 30 L 60 36.5 L 66.5 30"
+            d="M 60 60 L 60 36"
             fill="none"
-            stroke="#07090A"
-            strokeOpacity={0.78}
-            strokeWidth={11}
+            stroke={visual.color}
+            strokeOpacity={0.25}
+            strokeWidth={9}
             strokeLinecap="round"
-            strokeLinejoin="round"
           />
           <Path
-            d="M 53.5 30 L 60 36.5 L 66.5 30"
+            d="M 60 60 L 60 36"
             fill="none"
             stroke={`url(#${gradientId})`}
             strokeWidth={5.5}
             strokeLinecap="round"
+          />
+          <Path
+            d="M 54 41.5 L 60 35 L 66 41.5"
+            fill="none"
+            stroke={visual.color}
+            strokeOpacity={0.24}
+            strokeWidth={7}
+            strokeLinecap="round"
             strokeLinejoin="round"
           />
           <Path
-            d="M 54.5 29.7 L 60 35.2"
+            d="M 54 41.5 L 60 35 L 66 41.5"
             fill="none"
-            stroke={visual.highlight}
-            strokeOpacity={0.48}
-            strokeWidth={1.4}
+            stroke={`url(#${gradientId})`}
+            strokeWidth={3.25}
             strokeLinecap="round"
+            strokeLinejoin="round"
           />
         </G>
+        <Circle cx={60} cy={60} r={12} fill={visual.color} opacity={0.24} />
+        <Circle cx={60} cy={60} r={8.5} fill={`url(#${gradientId})`} />
+        <Circle cx={57.7} cy={57.7} r={1.8} fill={visual.highlight} opacity={0.42} />
       </Svg>
     </View>
   );

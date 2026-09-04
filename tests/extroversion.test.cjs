@@ -34,9 +34,9 @@ test('maps the scale from a blue left position to a red right position', () => {
   assert.equal(extrovert.color, '#FF3B30');
   assert.ok(introvert.needleRotation < ambivert.needleRotation);
   assert.ok(ambivert.needleRotation < extrovert.needleRotation);
-  assert.equal(introvert.needleRotation, -70);
+  assert.equal(introvert.needleRotation, -140);
   assert.equal(ambivert.needleRotation, 0);
-  assert.equal(extrovert.needleRotation, 70);
+  assert.equal(extrovert.needleRotation, 140);
 });
 
 test('provides an understandable band for each part of the scale', () => {

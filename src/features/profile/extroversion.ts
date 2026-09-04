@@ -52,7 +52,7 @@ export function getExtroversionVisual(level: number) {
     color,
     highlight: mixHex(color, '#FFFFFF', 0.2),
     shadow: mixHex(color, '#000000', 0.18),
-    needleRotation: ((normalized - DEFAULT_EXTROVERSION_LEVEL) / (MAX_EXTROVERSION_LEVEL - DEFAULT_EXTROVERSION_LEVEL)) * 70,
+    needleRotation: ((normalized - DEFAULT_EXTROVERSION_LEVEL) / (MAX_EXTROVERSION_LEVEL - DEFAULT_EXTROVERSION_LEVEL)) * 140,
   };
 }
 

@@ -6,6 +6,7 @@ import { photos } from '../assets';
 import { PartyIcon } from '../components/icons/PartyIcon';
 import { Screen } from '../components/Screen';
 import { useHomeExperience } from '../features/home/HomeExperienceProvider';
+import { LobbyExtroversionIndicator } from '../features/home/LobbyExtroversionIndicator';
 import { DemoLobby, demoLobbies, getLobbyMembers, isLobbyJoined } from '../features/home/lobbies';
 import { searchLobbies } from '../features/search/searchLobbies';
 import { useI18n } from '../i18n/LocalizationProvider';
@@ -149,6 +150,7 @@ function SearchResult({ lobby, active, onPress }: { lobby: DemoLobby; active: bo
       <View style={styles.cardBody}>
         <View style={styles.cardTitleRow}>
           <Text numberOfLines={1} style={styles.cardTitle}>{t(lobby.titleKey)}</Text>
+          <LobbyExtroversionIndicator lobby={lobby} size={32} />
         </View>
         <Text numberOfLines={1} style={styles.venue}>{lobby.placeKey ? t(lobby.placeKey) : lobby.place}</Text>
         <Text numberOfLines={1} style={styles.meta}>{t(lobby.metaKey)}</Text>
@@ -182,7 +184,7 @@ const styles = StyleSheet.create({
   card: { flexDirection: 'row', gap: 12, alignItems: 'center', backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, borderRadius: 20, padding: 12, minHeight: 112 },
   photo: { width: 64, height: 74, borderRadius: 14, backgroundColor: colors.surfaceRaised },
   cardBody: { flex: 1, minWidth: 0, gap: 5 },
-  cardTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  cardTitleRow: { minHeight: 32, flexDirection: 'row', alignItems: 'center', gap: 7 },
   cardTitle: { flex: 1, color: colors.text, fontSize: 15, lineHeight: 20, fontWeight: '700' },
   venue: { color: colors.muted, fontSize: 12, lineHeight: 17 },
   meta: { color: colors.muted, fontSize: 10, lineHeight: 15 },

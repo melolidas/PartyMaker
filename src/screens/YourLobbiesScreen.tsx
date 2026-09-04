@@ -5,6 +5,7 @@ import { photos } from '../assets';
 import { Screen } from '../components/Screen';
 import { useHomeExperience } from '../features/home/HomeExperienceProvider';
 import { LobbyCountdown } from '../features/home/LobbyCountdown';
+import { LobbyExtroversionIndicator } from '../features/home/LobbyExtroversionIndicator';
 import { DemoLobby, demoLobbies, getJoinedLobbies, getLobbyMembers } from '../features/home/lobbies';
 import { useI18n } from '../i18n/LocalizationProvider';
 import { colors } from '../theme';
@@ -86,6 +87,7 @@ function JoinedLobbyCard({ lobby, active, onPress }: { lobby: DemoLobby; active:
       <View style={styles.cardBody}>
         <View style={styles.cardTitleRow}>
           <Text numberOfLines={2} style={styles.cardTitle}>{t(lobby.titleKey)}</Text>
+          <LobbyExtroversionIndicator lobby={lobby} size={34} />
           <Feather name="chevron-right" size={16} color={colors.muted} />
         </View>
         <Text style={styles.venue}>{lobby.placeKey ? t(lobby.placeKey) : lobby.place}</Text>
@@ -112,7 +114,7 @@ const styles = StyleSheet.create({
   card: { flexDirection: 'row', alignItems: 'stretch', minHeight: 150, padding: 12, gap: 12, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, borderRadius: 22 },
   photo: { width: 82, height: 116, alignSelf: 'center', borderRadius: 14, backgroundColor: colors.surfaceRaised },
   cardBody: { flex: 1, minWidth: 0, justifyContent: 'center', gap: 7 },
-  cardTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  cardTitleRow: { minHeight: 34, flexDirection: 'row', alignItems: 'center', gap: 7 },
   cardTitle: { flex: 1, color: colors.text, fontSize: 16, lineHeight: 21, fontWeight: '700' },
   venue: { color: colors.muted, fontSize: 12, lineHeight: 17 },
   meta: { color: colors.muted, fontSize: 11, lineHeight: 16 },

@@ -7,6 +7,7 @@ import { colors, radius } from '../../theme';
 import { getRemainingSeconds } from './countdown';
 import { useHomeClock, useHomeExperience } from './HomeExperienceProvider';
 import { LobbyCountdown } from './LobbyCountdown';
+import { LobbyExtroversionIndicator } from './LobbyExtroversionIndicator';
 import { DemoLobby, getLobbyMembers, isLobbyJoined } from './lobbies';
 
 export function LobbyPreview({ lobby, onClose, inline = false }: { lobby: DemoLobby; onClose: () => void; inline?: boolean }) {
@@ -34,6 +35,7 @@ export function LobbyPreview({ lobby, onClose, inline = false }: { lobby: DemoLo
             <Image source={photos[lobby.photo]} style={styles.photo} />
             <View style={styles.titleRow}>
               <Text style={styles.title}>{t(lobby.titleKey)}</Text>
+              <LobbyExtroversionIndicator lobby={lobby} size={40} />
             </View>
             <Text testID="lobby-description" style={styles.description}>{t(lobby.descriptionKey)}</Text>
             <View style={styles.details}>

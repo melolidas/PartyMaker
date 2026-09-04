@@ -6,6 +6,7 @@ import { Screen } from '../components/Screen';
 import { ChatStatusDot } from '../features/chats/ChatStatusDot';
 import { ChatStatus, getLobbyChatGroups, LobbyChat } from '../features/chats/lobbyChats';
 import { useHomeExperience } from '../features/home/HomeExperienceProvider';
+import { LobbyExtroversionIndicator } from '../features/home/LobbyExtroversionIndicator';
 import { DemoLobby, getLobbyMembers, HomeSession } from '../features/home/lobbies';
 import { useI18n } from '../i18n/LocalizationProvider';
 import { colors } from '../theme';
@@ -111,6 +112,7 @@ function ChatRow({ active, chat, session, status, onOpenChat }: {
       <View style={styles.body}>
         <View style={styles.rowHeader}>
           <Text numberOfLines={1} style={[styles.chatTitle, inactive && styles.inactiveTitle]}>{t(lobby.titleKey)}</Text>
+          <LobbyExtroversionIndicator lobby={lobby} size={28} />
           {chat.timeKey ? <Text style={styles.time}>{t(chat.timeKey)}</Text> : null}
         </View>
         <Text numberOfLines={1} style={styles.preview}>{t(chat.previewKey)}</Text>

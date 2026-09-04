@@ -9,6 +9,7 @@ import { Screen } from '../components/Screen';
 import { PartyIcon } from '../components/icons/PartyIcon';
 import { ChatsModal } from '../features/chats/ChatsModal';
 import { useHomeExperience } from '../features/home/HomeExperienceProvider';
+import { LobbyExtroversionIndicator } from '../features/home/LobbyExtroversionIndicator';
 import { LobbyCountdown } from '../features/home/LobbyCountdown';
 import { LobbyPreview } from '../features/home/LobbyPreview';
 import { DemoLobby, demoLobbies, getJoinedLobbies, getLobbyMembers, isLobbyJoined } from '../features/home/lobbies';
@@ -103,6 +104,7 @@ function MiniLobby({ lobby, onPress }: LobbyCardProps) {
       <View style={styles.miniBody}>
         <View style={styles.lobbyTitleRow}>
           <Text style={[styles.cardTitle, styles.lobbyTitleText]}>{t(lobby.titleKey)}</Text>
+          <LobbyExtroversionIndicator lobby={lobby} size={32} />
         </View>
         <Text style={styles.cardSub}>{lobby.placeKey ? t(lobby.placeKey) : lobby.place}</Text>
         <Text testID={`your-meta-${lobby.id}`} style={styles.cardMeta}>{t(lobby.metaKey)}</Text>
@@ -135,6 +137,7 @@ function NearbyLobby({ lobby, onPress }: LobbyCardProps) {
       <View style={styles.nearbyBody}>
         <View style={styles.lobbyTitleRow}>
           <Text style={[styles.nearbyTitle, styles.lobbyTitleText]}>{t(lobby.titleKey)}</Text>
+          <LobbyExtroversionIndicator lobby={lobby} size={32} />
         </View>
         <Text style={styles.nearbyPlace}>{lobby.placeKey ? t(lobby.placeKey) : lobby.place}</Text>
         <Text testID={`nearby-meta-${lobby.id}`} style={styles.cardMeta}>{t(lobby.metaKey)}</Text>
@@ -169,7 +172,7 @@ const styles = StyleSheet.create({
   miniImage: { width: '100%', height: 84 },
   miniBody: { padding: 12, gap: 6 },
   cardTitle: { color: colors.text, fontSize: 14, fontWeight: '700' },
-  lobbyTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  lobbyTitleRow: { minHeight: 32, flexDirection: 'row', alignItems: 'center', gap: 7 },
   lobbyTitleText: { flex: 1 },
   cardSub: { color: colors.muted, fontSize: 12 },
   cardMeta: { color: colors.muted, fontSize: 11, lineHeight: 16 },

@@ -41,11 +41,13 @@ test('popup descriptions and actions exist in both languages', () => {
   }
 });
 
-test('demo events have stable unique ids, future starts and valid member counts', () => {
+test('demo events have stable ids, valid members and stable group extroversion levels', () => {
   assert.equal(new Set(demoLobbies.map((lobby) => lobby.id)).size, demoLobbies.length);
+  assert.ok(new Set(demoLobbies.map((lobby) => lobby.groupExtroversionLevel)).size > 1);
   for (const lobby of demoLobbies) {
     assert.ok(lobby.startsAfterMs > 0);
     assert.ok(lobby.members > 0 && lobby.members <= lobby.capacity);
+    assert.ok(lobby.groupExtroversionLevel >= 1 && lobby.groupExtroversionLevel <= 10);
   }
 });
 

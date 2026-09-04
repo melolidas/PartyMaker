@@ -24,6 +24,7 @@ import {
   MockConversationMessage,
 } from '../features/chats/mockConversation';
 import { useHomeExperience } from '../features/home/HomeExperienceProvider';
+import { LobbyExtroversionIndicator } from '../features/home/LobbyExtroversionIndicator';
 import { DemoLobby, getLobbyMembers } from '../features/home/lobbies';
 import { useI18n } from '../i18n/LocalizationProvider';
 import { TranslationKey } from '../i18n/translations';
@@ -179,6 +180,7 @@ export function LobbyChatScreen({ lobby, onBack, backLabel, scrollGesture }: Pro
             <Text accessibilityRole="header" numberOfLines={2} style={styles.title}>{t(lobby.titleKey)}</Text>
             <Text style={styles.subtitle}>{t('home.participants')}: {members}</Text>
           </View>
+          <LobbyExtroversionIndicator lobby={lobby} size={34} />
           <View style={styles.demoBadge}>
             <Text style={styles.demoBadgeText}>{t('conversation.demoTag')}</Text>
           </View>

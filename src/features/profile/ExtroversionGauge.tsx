@@ -63,22 +63,7 @@ export function ExtroversionGauge({ level, size = 96, accessibilityLabel, testID
         />
         <G rotation={visual.needleRotation} origin="60, 60">
           <Path
-            d="M 60 60 L 60 36"
-            fill="none"
-            stroke={visual.color}
-            strokeOpacity={0.25}
-            strokeWidth={9}
-            strokeLinecap="round"
-          />
-          <Path
-            d="M 60 60 L 60 36"
-            fill="none"
-            stroke={`url(#${gradientId})`}
-            strokeWidth={5.5}
-            strokeLinecap="round"
-          />
-          <Path
-            d="M 54 41.5 L 60 35 L 66 41.5"
+            d="M 53 51 L 60 43 L 67 51"
             fill="none"
             stroke={visual.color}
             strokeOpacity={0.24}
@@ -87,7 +72,7 @@ export function ExtroversionGauge({ level, size = 96, accessibilityLabel, testID
             strokeLinejoin="round"
           />
           <Path
-            d="M 54 41.5 L 60 35 L 66 41.5"
+            d="M 53 51 L 60 43 L 67 51"
             fill="none"
             stroke={`url(#${gradientId})`}
             strokeWidth={3.25}
@@ -95,9 +80,9 @@ export function ExtroversionGauge({ level, size = 96, accessibilityLabel, testID
             strokeLinejoin="round"
           />
         </G>
-        <Circle cx={60} cy={60} r={12} fill={visual.color} opacity={0.24} />
-        <Circle cx={60} cy={60} r={8.5} fill={`url(#${gradientId})`} />
-        <Circle cx={57.7} cy={57.7} r={1.8} fill={visual.highlight} opacity={0.42} />
+        <Circle cx={60} cy={60} r={13} fill={visual.color} opacity={0.24} />
+        <Circle cx={60} cy={60} r={9.5} fill={`url(#${gradientId})`} />
+        <Circle cx={57.4} cy={57.4} r={2} fill={visual.highlight} opacity={0.42} />
       </Svg>
     </View>
   );

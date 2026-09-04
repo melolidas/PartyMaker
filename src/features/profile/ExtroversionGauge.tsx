@@ -39,7 +39,7 @@ export function ExtroversionGauge({ level, size = 96, accessibilityLabel, testID
         </Defs>
 
         <Path
-          d="M 37 100 A 46 46 0 1 1 83 100"
+          d="M 26 91 A 46 46 0 1 1 94 91"
           fill="none"
           stroke={visual.color}
           strokeOpacity={0.28}
@@ -47,14 +47,14 @@ export function ExtroversionGauge({ level, size = 96, accessibilityLabel, testID
           strokeLinecap="round"
         />
         <Path
-          d="M 37 100 A 46 46 0 1 1 83 100"
+          d="M 26 91 A 46 46 0 1 1 94 91"
           fill="none"
           stroke={`url(#${gradientId})`}
           strokeWidth={19}
           strokeLinecap="round"
         />
         <Path
-          d="M 37 100 A 46 46 0 1 1 83 100"
+          d="M 26 91 A 46 46 0 1 1 94 91"
           fill="none"
           stroke={visual.highlight}
           strokeOpacity={0.34}

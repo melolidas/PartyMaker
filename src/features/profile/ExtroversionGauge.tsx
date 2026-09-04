@@ -63,24 +63,22 @@ export function ExtroversionGauge({ level, size = 96, accessibilityLabel, testID
         />
         <G rotation={visual.needleRotation} origin="60, 60">
           <Path
-            d="M 53 51 L 60 40.5 L 67 51 Z"
+            d="M 60 40.5 L 66.7 53.3 A 9.5 9.5 0 1 1 53.3 53.3 Z"
             fill={visual.color}
             fillOpacity={0.24}
             stroke={visual.color}
             strokeOpacity={0.24}
-            strokeWidth={5}
+            strokeWidth={7}
             strokeLinejoin="round"
           />
           <Path
-            d="M 53 51 L 60 40.5 L 67 51 Z"
+            d="M 60 40.5 L 66.7 53.3 A 9.5 9.5 0 1 1 53.3 53.3 Z"
             fill={`url(#${gradientId})`}
             stroke={`url(#${gradientId})`}
             strokeWidth={1.5}
             strokeLinejoin="round"
           />
         </G>
-        <Circle cx={60} cy={60} r={13} fill={visual.color} opacity={0.24} />
-        <Circle cx={60} cy={60} r={9.5} fill={`url(#${gradientId})`} />
         <Circle cx={57.4} cy={57.4} r={2} fill={visual.highlight} opacity={0.42} />
       </Svg>
     </View>

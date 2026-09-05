@@ -1,4 +1,4 @@
-import { BadRequestException, Inject, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
 import { isUUID } from 'class-validator';
 
@@ -8,15 +8,15 @@ import type { CreateLobbyRequestDto } from './dto/create-lobby-request.dto';
 import type { LobbyPageResponseDto, LobbyResponseDto } from './dto/lobby-response.dto';
 import { parseLobbyInstant } from './lobby-instant';
 
-const lobbySelect = {
-  id: true, title: true, description: true, category: true, startsAt: true,
+const lobbySelect = (userId: string) => ({
+  id: true, organizerId: true, title: true, description: true, category: true, startsAt: true,
   timeZone: true, isOnline: true, venueName: true, capacity: true,
   members: {
-    where: { status: 'JOINED' },
-    select: { userId: true, user: { select: { extroversionScoreX2: true } } },
+    where: { OR: [{ status: 'JOINED' }, { userId }] },
+    select: { userId: true, status: true, user: { select: { extroversionScoreX2: true } } },
   },
-} satisfies Prisma.LobbySelect;
-type LobbyRow = Prisma.LobbyGetPayload<{ select: typeof lobbySelect }>;
+} satisfies Prisma.LobbySelect);
+type LobbyRow = Prisma.LobbyGetPayload<{ select: ReturnType<typeof lobbySelect> }>;
 type Cursor = { startsAt: string; id: string };
 
 function encodeCursor(lobby: { startsAt: Date; id: string }): string {
@@ -38,15 +38,19 @@ function decodeCursor(value: string): Cursor {
 }
 
 function toLobbyResponse(lobby: LobbyRow, userId: string): LobbyResponseDto {
-  const joinedCount = lobby.members.length;
+  const joined = lobby.members.filter((member) => member.status === 'JOINED');
+  const joinedCount = joined.length;
+  const own = lobby.members.find((member) => member.userId === userId);
   return {
     id: lobby.id, title: lobby.title, description: lobby.description, category: lobby.category,
     startsAt: lobby.startsAt.toISOString(), timeZone: lobby.timeZone,
     isOnline: lobby.isOnline, venueName: lobby.isOnline ? null : lobby.venueName,
     capacity: lobby.capacity, joinedCount,
-    isJoined: lobby.members.some((member) => member.userId === userId),
+    isJoined: own?.status === 'JOINED',
+    membershipStatus: own?.status ?? null,
+    isOrganizer: lobby.organizerId === userId,
     groupExtroversionLevel: joinedCount === 0 ? null : Math.round(
-      lobby.members.reduce((sum, member) => sum + member.user.extroversionScoreX2, 0) / joinedCount,
+      joined.reduce((sum, member) => sum + member.user.extroversionScoreX2, 0) / joinedCount,
     ) / 2,
   };
 }
@@ -69,7 +73,7 @@ export class LobbiesService {
         organizerId: userId, status: 'PUBLISHED', minParticipants: 2,
         members: { create: { userId, role: 'ORGANIZER', status: 'JOINED' } },
       },
-      select: lobbySelect,
+      select: lobbySelect(userId),
     });
     return toLobbyResponse(lobby, userId);
   }
@@ -88,7 +92,7 @@ export class LobbiesService {
       },
       orderBy: [{ startsAt: 'asc' }, { id: 'asc' }],
       take: query.limit + 1,
-      select: lobbySelect,
+      select: lobbySelect(userId),
     });
     const page = rows.slice(0, query.limit);
     const last = page.at(-1);
@@ -98,9 +102,51 @@ export class LobbiesService {
     };
   }
 
+
+  async changeMembership(id: string, userId: string, action: 'join' | 'leave'): Promise<LobbyResponseDto> {
+    return this.prisma.$transaction(async (tx) => {
+      // Both actions lock the SAME parent row before reading membership/capacity.
+      // ReadCommitted reads after a lock wait see the preceding transaction's commit.
+      await tx.$queryRaw`SELECT id FROM "Lobby" WHERE id = ${id}::uuid FOR UPDATE`;
+      const lobby = await tx.lobby.findFirst({
+        where: { id, status: 'PUBLISHED' }, select: lobbySelect(userId),
+      });
+      if (!lobby) throw new NotFoundException({ code: 'LOBBY_NOT_FOUND', message: 'Lobby not found' });
+      const own = lobby.members.find((member) => member.userId === userId);
+      if (action === 'leave' && lobby.organizerId === userId) {
+        throw new ConflictException({ code: 'LOBBY_ORGANIZER_CANNOT_LEAVE', message: 'The organizer cannot leave this lobby' });
+      }
+      if (own?.status === 'REMOVED') {
+        throw new ConflictException({ code: 'LOBBY_MEMBERSHIP_REMOVED', message: 'Removed membership cannot be changed by the participant' });
+      }
+      // Idempotent no-ops precede time/capacity checks and never rewrite history.
+      if ((action === 'join' && own?.status === 'JOINED') || (action === 'leave' && own?.status !== 'JOINED')) {
+        return toLobbyResponse(lobby, userId);
+      }
+      const now = new Date();
+      if (lobby.startsAt <= now) {
+        throw new ConflictException({ code: 'LOBBY_STARTED', message: 'Membership can only change before the event starts' });
+      }
+      const key = { lobbyId_userId: { lobbyId: id, userId } };
+      if (action === 'join') {
+        const count = lobby.members.filter((member) => member.status === 'JOINED').length;
+        if (count >= lobby.capacity) throw new ConflictException({ code: 'LOBBY_FULL', message: 'The lobby is full' });
+        if (own) {
+          await tx.lobbyMember.update({ where: key, data: { status: 'JOINED', joinedAt: now, leftAt: null } });
+        } else {
+          await tx.lobbyMember.create({ data: { lobbyId: id, userId, role: 'MEMBER', status: 'JOINED', joinedAt: now } });
+        }
+      } else {
+        await tx.lobbyMember.update({ where: key, data: { status: 'LEFT', leftAt: now } });
+      }
+      const updated = await tx.lobby.findUniqueOrThrow({ where: { id }, select: lobbySelect(userId) });
+      return toLobbyResponse(updated, userId);
+    }, { isolationLevel: 'ReadCommitted' });
+  }
+
   async get(id: string, userId: string): Promise<LobbyResponseDto> {
     const lobby = await this.prisma.lobby.findFirst({
-      where: { id, status: 'PUBLISHED' }, select: lobbySelect,
+      where: { id, status: 'PUBLISHED' }, select: lobbySelect(userId),
     });
     if (!lobby) throw new NotFoundException({ code: 'LOBBY_NOT_FOUND', message: 'Lobby not found' });
     return toLobbyResponse(lobby, userId);

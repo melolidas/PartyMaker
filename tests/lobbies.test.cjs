@@ -8,6 +8,9 @@ const { LobbyFeedStore, formatLobbyStartsAt } = require('../.expo/lobby-tests/fe
 const { createTranslator } = require('../.expo/lobby-tests/i18n/translations.js');
 const { ApiClient } = require('../.expo/lobby-tests/api/client.js');
 const { ApiClientError } = require('../.expo/lobby-tests/api/errors.js');
+const { getLobbyInvalidation } = require('../.expo/lobby-tests/api/lobbyInvalidation.js');
+const detailsLogic = require('../.expo/lobby-tests/features/home/lobbyDetails.js');
+const { LobbyDetailsStore, membershipAction } = detailsLogic;
 const createForm = require('../.expo/lobby-tests/features/home/createLobbyForm.js');
 const { CreateLobbyFormStore, validateLobbyForm, bishkekDateTimeToInstant } = createForm;
 
@@ -15,6 +18,7 @@ const lobby = {
   id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', title: 'demo.pizza', description: 'My own description <not markup>',
   category: 'FOOD', startsAt: '2030-01-01T00:00:00.000Z', timeZone: 'Asia/Bishkek',
   isOnline: false, venueName: 'Actual venue', capacity: 8, joinedCount: 2, isJoined: false, groupExtroversionLevel: null,
+  membershipStatus: null, isOrganizer: false,
 };
 const page = (items = [], nextCursor = null) => ({ items, nextCursor });
 function deferred() {
@@ -32,6 +36,7 @@ function host(auth) {
   let effects = [];
   const same = (a, b) => a && b && a.length === b.length && a.every((v, i) => Object.is(v, b[i]));
   const react = {
+    useContext(context) { return context.value; },
     useState(initial) {
       const at = cursor++;
       if (!slots[at]) slots[at] = { value: typeof initial === 'function' ? initial() : initial };
@@ -66,6 +71,9 @@ function host(auth) {
       '../../i18n/LocalizationProvider': { useI18n: () => ({ t: createTranslator('ru'), language: 'ru' }) },
       '../../theme': { colors: {}, radius: {} },
       '../../api/errors': { ApiClientError },
+      '../../api/lobbyInvalidation': { getLobbyInvalidation },
+      './lobbyDetails': detailsLogic,
+      '../navigation/NavScrollContext': { NavScrollContext: { value() {} } },
       './lobbyFeed': { LobbyFeedStore, formatLobbyStartsAt, emptyLobbyFeed: require('../.expo/lobby-tests/features/home/lobbyFeed.js').emptyLobbyFeed },
       './LiveLobbyCard': { LiveLobbyCard: 'LiveLobbyCard', LiveLobbyMetadata: 'LiveLobbyMetadata', LobbyCategoryPlaceholder: 'LobbyCategoryPlaceholder' },
       './LobbyCountdown': { LobbyCountdown: 'LobbyCountdown' },
@@ -195,7 +203,7 @@ test('real strings stay literal, dates use event timezone and countdown takes th
   assert.doesNotMatch(texts(metadata), /км|km/);
 });
 
-test('actual details load by id, preserve user description and expose no working join/chat action', async () => {
+test('actual details load by id, preserve user description and offer membership but no chat action', async () => {
   const pending = deferred(); let selected;
   const auth = { user: { id: 'A' }, lobbyApi: { getLobby: id => { selected = id; return pending.promise; } } };
   const h = host(auth); const { LiveLobbyDetails } = h.load('src/features/home/LiveLobbyDetails.tsx');
@@ -204,7 +212,9 @@ test('actual details load by id, preserve user description and expose no working
   pending.resolve(lobby); await flush();
   const tree = render();
   assert.equal(texts(byId(tree, 'live-lobby-description')), lobby.description);
-  for (const label of ['Вступить — недоступно', 'Чат — недоступен']) {
+  assert.equal(texts(byId(tree,'membership-action')), 'Вступить в лобби');
+  assert.equal(byId(tree,'membership-action').props.disabled, false);
+  for (const label of ['Чат — недоступен']) {
     const action = button(tree, label); assert.equal(action.props.disabled, true); assert.equal(action.props.onPress, undefined);
   }
   h.unmount();
@@ -431,6 +441,161 @@ function creationClient(handler) {
   return new ApiClient({baseUrl:()=> 'http://api.test/api/v1',refreshTokenStorage:{async get(){return token;},async set(v){token=v;},async clear(){token=null;}},fetchImpl:handler});
 }
 const authReply = (n, userId = 'A') => new Response(JSON.stringify({user:{id:userId},accessToken:'access-'+n,refreshToken:'refresh-'+n}));
+
+test('Home <-> personal transitions expand nav even when the destination cannot scroll', () => {
+  let compact=true;const resets=[];
+  const h=host({});
+  const {HomeScreen}=h.load('src/screens/HomeScreen.tsx',{
+    ...personalScreenMocks({}),
+    '../navigation/NavScrollContext':{NavScrollContext:{value(value){compact=value;resets.push(value);}}},
+    '@expo-google-fonts/outfit/600SemiBold':{Outfit_600SemiBold:{}},'expo-font':{useFonts:()=>[true]},
+    '../components/icons/PartyIcon':{PartyIcon:'PartyIcon'},
+    '../features/chats/ChatsModal':{ChatsModal:'ChatsModal'},'../features/search/SearchModal':{SearchModal:'SearchModal'},
+    './PersonalLobbiesScreen':{PersonalLobbiesScreen:'PersonalLobbiesScreen'},
+  });
+  const render=()=>h.render(HomeScreen,{});
+  nodes(render()).find(n=>n.type==='LiveLobbyFeed'&&n.props.scope==='mine').props.onViewAll();
+  assert.equal(compact,false,'Entry expands without a scroll event from the short personal page');
+  const personal=render();assert.equal(personal.type,'PersonalLobbiesScreen');
+  compact=true;personal.props.onClose();
+  assert.equal(compact,false,'Return expands even if Home is empty/short');
+  assert.ok(nodes(render()).find(n=>n.type==='LiveLobbyFeed'));assert.deepEqual(resets,[false,false]);h.unmount();
+});
+
+const joinedLobby = { ...lobby, isJoined:true, membershipStatus:'JOINED', joinedCount:3, groupExtroversionLevel:5.5 };
+test('membership action uses explicit own status/organizer, and all disabled reasons are localized', () => {
+  assert.equal(membershipAction(lobby).action,'join');
+  assert.equal(membershipAction({...joinedLobby,isOrganizer:false,capacity:3}).action,'leave','JOINED does not imply organizer');
+  assert.equal(membershipAction({...lobby,membershipStatus:'LEFT'}).action,'join');
+  for(const [change,reason] of [
+    [{...joinedLobby,isOrganizer:true},'membership.organizerReason'],
+    [{membershipStatus:'REMOVED'},'membership.removed'],
+    [{startsAt:'2000-01-01T00:00:00.000Z'},'membership.started'],
+    [{capacity:2},'membership.full'],
+  ]) {
+    const result=membershipAction({...lobby,...change});assert.equal(result.action,null);assert.equal(result.reason,reason);
+    for(const language of ['ru','en'])assert.notEqual(createTranslator(language)(reason),reason);
+  }
+});
+
+test('actual details lock double/opposite clicks, do not optimistically join and then allow leave', async () => {
+  const pending=deferred();let server=lobby;let posts=0;
+  const auth={user:{id:'A'},lobbyApi:{getLobby:async()=>server,joinLobby:()=>{posts++;return pending.promise;},leaveLobby:async()=>{posts++;return server={...lobby,membershipStatus:'LEFT'};}}};
+  const h=host(auth);const {LiveLobbyDetails}=h.load('src/features/home/LiveLobbyDetails.tsx');
+  const render=()=>h.render(LiveLobbyDetails,{id:lobby.id,onClose(){}});
+  render();await flush();const click=byId(render(),'membership-action').props.onPress;
+  click();click();assert.equal(posts,1);
+  assert.equal(byId(render(),'membership-action').props.disabled,true);
+  assert.equal(nodes(render()).find(n=>n.type==='LiveLobbyMetadata').props.lobby.isJoined,false);
+  server=joinedLobby;pending.resolve(server);await flush();
+  assert.equal(texts(byId(render(),'membership-action')),'Выйти из лобби');
+  assert.equal(nodes(render()).find(n=>n.type==='LiveLobbyMetadata').props.lobby.isJoined,true);
+  byId(render(),'membership-action').props.onPress();await flush();
+  assert.equal(posts,2);assert.equal(texts(byId(render(),'membership-action')),'Вступить в лобби');h.unmount();
+});
+
+test('membership errors and ambiguous outcomes verify with GET, never retry POST or claim success', async () => {
+  for(const [code,key] of [['LOBBY_FULL','membership.full'],['LOBBY_STARTED','membership.started'],['LOBBY_MEMBERSHIP_REMOVED','membership.removed'],['LOBBY_ORGANIZER_CANNOT_LEAVE','membership.organizerReason'],['LOBBY_NOT_FOUND','lobbies.notFound'],['NETWORK_ERROR','membership.unconfirmed']]) {
+    let reads=0,posts=0,failRead=false;
+    const store=new LobbyDetailsStore({getLobby:async()=>{reads++;if(failRead)throw Error('offline');return lobby;},joinLobby:async()=>{posts++;throw new ApiClientError({statusCode:code==='NETWORK_ERROR'?0:409,code,message:'failed'});}});
+    store.setContext('A',lobby.id);await flush();failRead=true;
+    await store.changeMembership();
+    assert.equal(posts,1);assert.equal(reads,2);assert.equal(store.getSnapshot().actionError,key);
+    assert.equal(store.getSnapshot().lobby.isJoined,false);assert.ok(store.getSnapshot().error);
+    await store.changeMembership();assert.equal(posts,1,'Verification failure keeps actions blocked');
+    failRead=false;await store.reload();assert.equal(store.getSnapshot().error,null);assert.equal(store.getSnapshot().actionError,key);
+  }
+  let reads=0,posts=0;
+  const store=new LobbyDetailsStore({getLobby:async()=>++reads===1?lobby:joinedLobby,joinLobby:async()=>{posts++;throw Error('lost successful response');}});
+  store.setContext('A',lobby.id);await flush();await store.changeMembership();
+  assert.equal(posts,1);assert.equal(store.getSnapshot().lobby.isJoined,true,'Only a confirmed GET exposes the committed join');
+  assert.equal(store.getSnapshot().actionError,'membership.unconfirmed');
+});
+
+test('membership completion after account switch/logout/unmount cannot alter details', async () => {
+  for(const account of [null,'B'])for(const fails of [false,true]){
+    const pending=deferred();
+    const store=new LobbyDetailsStore({getLobby:async()=>lobby,joinLobby:()=>pending.promise});
+    store.setContext('A',lobby.id);await flush();const action=store.changeMembership();
+    store.setContext(account,lobby.id);await flush();
+    fails?pending.reject(Error('late failure')):pending.resolve(joinedLobby);await action;
+    assert.equal(store.getSnapshot().account,account);assert.equal(store.getSnapshot().actionError,null);
+    assert.equal(store.getSnapshot().lobby?.isJoined,account?false:undefined);
+  }
+});
+
+test('actual shared invalidation refreshes all/Home mine/full mine/details and rejects old GET/page results', async () => {
+  let server=lobby;let oldReads=false;const pending=[];const listCalls=[];
+  const response=value=>new Response(JSON.stringify(value));
+  const client=creationClient(async(url)=>{
+    if(url.endsWith('/auth/login'))return authReply(1);
+    if(url.endsWith('/join')){server=joinedLobby;return response(server);}
+    if(url.endsWith('/leave')){server={...lobby,membershipStatus:'LEFT'};return response(server);}
+    if(oldReads){const d=deferred();pending.push(d);return d.promise;}
+    if(url.includes('/lobbies?')){
+      const mine=url.includes('scope=mine');listCalls.push(mine?'mine':'all');
+      return response(page(mine&&!server.isJoined?[]:[server],'next'));
+    }
+    return response(server);
+  });
+  await client.login({email:'a@example.test',password:'test-only'});
+  const auth={status:'authenticated',user:{id:'A'},lobbyApi:client};
+  const feeds=['all','mine','mine'].map(scope=>{
+    const h=host(auth),{LiveLobbyFeed}=h.load('src/features/home/LiveLobbyFeed.tsx');
+    return {h,render:()=>h.render(LiveLobbyFeed,{scope,onSelect(){}})};
+  });
+  const detailsHost=host(auth),{LiveLobbyDetails}=detailsHost.load('src/features/home/LiveLobbyDetails.tsx');
+  const details=()=>detailsHost.render(LiveLobbyDetails,{id:lobby.id,onClose(){}});
+  feeds.forEach(f=>f.render());details();await flush();
+  oldReads=true;
+  byId(feeds[0].render(),'lobbies-load-more').props.onPress();
+  for(const feed of feeds.slice(1))button(feed.render(),'Обновить').props.onPress();
+  byId(details(),'membership-refresh').props.onPress();
+  await flush();assert.equal(pending.length,4);
+  oldReads=false;await client.joinLobby(lobby.id);await flush();
+  for(const feed of feeds)assert.equal(nodes(feed.render()).find(n=>n.type==='LiveLobbyCard').props.lobby.isJoined,true);
+  assert.equal(nodes(details()).find(n=>n.type==='LiveLobbyMetadata').props.lobby.joinedCount,3);
+  pending[0].resolve(response(page([{...lobby,id:'stale-page'}])));
+  pending[1].resolve(response(page()));pending[2].resolve(response(page()));pending[3].resolve(response(lobby));await flush();
+  for(const feed of feeds)assert.deepEqual(nodes(feed.render()).filter(n=>n.type==='LiveLobbyCard').map(n=>n.props.lobby.id),[lobby.id]);
+  assert.equal(nodes(details()).find(n=>n.type==='LiveLobbyMetadata').props.lobby.isJoined,true);
+  await client.leaveLobby(lobby.id);await flush();
+  for(const feed of feeds.slice(1))assert.ok(byId(feed.render(),'mine-lobbies-empty'));
+  assert.equal(nodes(feeds[0].render()).find(n=>n.type==='LiveLobbyCard').props.lobby.joinedCount,2);
+  assert.equal(nodes(details()).find(n=>n.type==='LiveLobbyMetadata').props.lobby.membershipStatus,'LEFT');
+  assert.equal(listCalls.filter(s=>s==='mine').length,6,'Both independent mine stores refreshed on both actions');
+  feeds.forEach(f=>f.h.unmount());detailsHost.unmount();
+});
+
+test('late membership transport response cannot invalidate or mutate another session; POST is bounded', async () => {
+  for(const logout of [false,true]){
+    let logins=0,invalidations=0;const pending=deferred();
+    const client=creationClient(async url=>{
+      if(url.endsWith('/auth/login'))return authReply(++logins,logins===1?'A':'B');
+      if(url.endsWith('/auth/logout'))return new Response(null,{status:204});
+      return pending.promise;
+    });
+    const unsubscribe=getLobbyInvalidation(client).subscribe(()=>invalidations++);
+    await client.login({email:'a@example.test',password:'test-only'});
+    const op=client.joinLobby(lobby.id);const rejected=assert.rejects(op,error=>error.code==='INVALID_REFRESH_TOKEN');
+    if(logout)await client.logout();else await client.login({email:'b@example.test',password:'test-only'});
+    pending.resolve(new Response(JSON.stringify(joinedLobby)));await rejected;assert.equal(invalidations,0);unsubscribe();
+  }
+  for(const mode of ['401','network']){
+    let posts=0,refreshes=0;
+    const client=creationClient(async(url,options)=>{
+      if(url.endsWith('/auth/login'))return authReply(1);
+      if(url.endsWith('/auth/refresh')){refreshes++;return authReply(2);}
+      posts++;assert.equal(options.method,'POST');assert.equal(options.body,undefined);
+      if(mode==='network')throw Error('offline');
+      if(posts===1)return new Response(JSON.stringify({error:{code:'INVALID_ACCESS_TOKEN',message:'expired'}}),{status:401});
+      return new Response(JSON.stringify(joinedLobby));
+    });
+    await client.login({email:'a@example.test',password:'test-only'});
+    if(mode==='network'){await assert.rejects(client.joinLobby(lobby.id));assert.equal(posts,1);assert.equal(refreshes,0);}
+    else{await client.joinLobby(lobby.id);assert.equal(posts,2);assert.equal(refreshes,1);}
+  }
+});
 
 test('mine feed loading/empty/create/error/retry never substitutes demo records', async () => {
   let next = deferred(); const calls=[]; let creates=0;

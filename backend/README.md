@@ -109,7 +109,7 @@ The shared `configureApp` applies the same policy in tests and production bootst
 
 `npm run test:cors` runs the CORS/configuration checks without PostgreSQL or `.env`. The same tests also run in `npm test`, alongside the database-backed Auth/Profile suite.
 
-On web, refresh tokens remain **memory-only**; reloading the page requires explicit sign-in. There is no cookie or localStorage session persistence. Profile changes and newly created lobbies persist in PostgreSQL. Home loads real upcoming lobbies and read-only details. Joining/leaving, editing/deleting lobbies, Search, Chat, Moments, Activity/Notifications and Media APIs remain unimplemented; existing demo sections stay separate and labeled.
+On web, refresh tokens remain **memory-only**; reloading the page requires explicit sign-in. There is no cookie or localStorage session persistence. Profile changes and newly created lobbies persist in PostgreSQL. Home loads real upcoming lobbies, personal memberships and details with working join/leave. Editing/deleting lobbies, Search, Chat, Moments, Activity/Notifications and Media APIs remain unimplemented; existing demo sections stay separate and labeled.
 
 ## Auth and profile API
 
@@ -152,16 +152,31 @@ Passwords are hashed with Argon2id. Refresh tokens are random opaque values; onl
 
 ## Lobby API: catalog, personal upcoming list, details and creation
 
-All three endpoints require the existing Bearer access-token guard. Swagger documents their DTOs and validation errors; no database schema change is needed.
+All Lobby endpoints require the existing Bearer access-token guard. Swagger documents their DTOs and validation errors; no database schema change is needed.
 
 - `GET /api/v1/lobbies?limit=20&after=<cursor>` returns `{ "items": [...], "nextCursor": "..." }` (or `null` for the last page). `limit` is an integer from 1 to 50, default 20. `after` is the opaque keyset cursor returned by the preceding page; malformed cursors return `400 VALIDATION_FAILED`. Cursor dates must be canonical UTC ISO timestamps with a four-digit AD year (0001–9999); extended years such as `+275760` are rejected before Prisma rather than producing 500.
 - The catalog includes only `PUBLISHED` events with `startsAt > now`, sorted by `startsAt ASC, id ASC`. Equal timestamps use id as the stable tie-breaker. Each request evaluates the current time; pages are not a frozen snapshot of concurrent event edits.
 - `scope=all|mine` is optional, default `all` (unchanged catalog). `GET /api/v1/lobbies?scope=mine&limit=20&after=<cursor>` adds a JOINED membership filter for the Bearer user, still restricted to future PUBLISHED events. Organizer participation comes through the actual membership created with POST; organizerId alone is insufficient. LEFT/REMOVED, past and unpublished events are excluded. Invalid scope or userId/organizerId query parameters return `400 VALIDATION_FAILED`; clients cannot select another user's list. Pagination is independent of all, with the same tuple ordering and bounds. No total count is returned.
 - `GET /api/v1/lobbies/:id` returns a published lobby, including a past published event. Missing, draft, cancelled or completed lobbies return `404 LOBBY_NOT_FOUND`; malformed UUIDs return validation error 400.
 
-The explicit response projection contains only `id`, `title`, `description`, `category`, `startsAt` (absolute ISO timestamp), `timeZone`, `isOnline`, `venueName` (null for online events), `capacity`, `joinedCount`, `isJoined`, and `groupExtroversionLevel`. No participant lists, emails, credential hashes, raw tokens, coordinates or internal media storage keys are exposed. LEFT and REMOVED memberships do not count and do not set `isJoined`.
+The explicit response projection contains only `id`, `title`, `description`, `category`, `startsAt` (absolute ISO timestamp), `timeZone`, `isOnline`, `venueName` (null for online events), `capacity`, `joinedCount`, `isJoined`, `membershipStatus` (the Bearer user's status or null), `isOrganizer` (from organizerId, not isJoined), and `groupExtroversionLevel`. No participant lists, emails, credential hashes, raw tokens, coordinates or internal media storage keys are exposed. LEFT and REMOVED memberships do not count and do not set `isJoined`.
 
 The group score is `round(sum(JOINED users' extroversionScoreX2) / joinedCount) / 2`: mean level rounded to the nearest half-level, with positive ties upward. It is null when no JOINED users exist. In mine, both count and score still use **all** JOINED members, not only the requesting user. The client hides an absent score and uses category placeholders instead of exposing internal media paths. No distance is claimed without geographic search.
+
+### POST /api/v1/lobbies/:id/join and /:id/leave
+
+Both return **200** with the same current safe Lobby DTO. No body/query fields are accepted (omit the body or send an empty JSON object); userId, role, status and other fields return 400 VALIDATION_FAILED. Only the Bearer membership can change. Malformed id: 400; absent/unpublished lobby: 404 LOBBY_NOT_FOUND; missing/invalid Bearer: 401 INVALID_ACCESS_TOKEN.
+
+- Join: JOINED is a successful no-op, even if full or already started; joinedAt and counts do not change. No membership / LEFT can join before startsAt if a place exists. LEFT reuses the same composite-key row, sets a fresh joinedAt and clears leftAt. REMOVED cannot self-rejoin.
+- Leave: organizer is blocked. Ordinary JOINED transitions to LEFT only before startsAt, setting leftAt and preserving joinedAt/role. LEFT and absent memberships are successful no-ops, including after startsAt; no row is inserted. REMOVED is rejected, never changed to LEFT.
+- 409 LOBBY_FULL: no free place for a real join (organizer occupies a place).
+- 409 LOBBY_STARTED: a real membership transition was requested after the event started.
+- 409 LOBBY_MEMBERSHIP_REMOVED: self-changing a REMOVED membership, including the leave → join bypass.
+- 409 LOBBY_ORGANIZER_CANNOT_LEAVE: leaving as organizer; transfer/cancellation are not implemented.
+
+**Concurrency:** both actions run in a PostgreSQL ReadCommitted transaction and first acquire a parameterized `SELECT id FROM "Lobby" WHERE id = ... FOR UPDATE` on the same parent row. Membership, startsAt and JOINED count are read/checked **after** obtaining the lock; writes and the response projection occur before releasing it at commit. Competing actions serialize per lobby across backend processes, not through an in-memory mutex. The existing (lobbyId, userId) primary key remains. A second join sees the first commit: either the same user's no-op or LOBBY_FULL, never an extra place. All future membership/capacity writers must honor this parent-row protocol; arbitrary SQL/imports bypassing it are outside the API guarantee. No Prisma schema/migration changes.
+
+Concurrency tests hold the actual PostgreSQL row lock and observe both HTTP requests waiting in pg_stat_activity before release. They cover the last place, duplicate user joins and overlapping join/leave; no sequential simulation. See [PostgreSQL row locks](https://www.postgresql.org/docs/current/explicit-locking.html#LOCKING-ROWS).
 
 ### POST /api/v1/lobbies
 
@@ -178,7 +193,7 @@ Returns **201** with the same safe Lobby DTO. Required JSON fields:
 
 The authenticated user supplies `organizerId` implicitly through the guard. The server sets `status=PUBLISHED` and `minParticipants=2`. Unknown/internal fields (`organizerId`, `status`, `members`, `id`, media, etc.) return `400 VALIDATION_FAILED`, as do invalid inputs. A nested Prisma create atomically inserts the lobby and exactly one organizer membership (`role=ORGANIZER`, `status=JOINED`); a child-insert failure rolls back the lobby. The response immediately reports `joinedCount=1`, `isJoined=true` and the organizer's real group score.
 
-POST has no idempotency key or automatic network retry. A lost response can mean the record was already saved; inspect the catalog or personal list before explicitly resubmitting. The frontend only retries after a definite guard rejection (`401 INVALID_ACCESS_TOKEN`) using its existing refresh mechanism. Home and View all now show real upcoming participation. Joining/leaving, completed-event history, editing/deleting and Media remain out of scope.
+POST has no idempotency key or automatic network retry. A lost response can mean the record was already saved; inspect the catalog or personal list before explicitly resubmitting. The frontend only retries after a definite guard rejection (`401 INVALID_ACCESS_TOKEN`) using its existing refresh mechanism. Home and View all now show real upcoming participation. Completed-event history, editing/deleting, invitations, notifications, organizer transfer, cancellation and Media remain out of scope.
 
 `npm test` includes database-backed Lobby tests using isolated random-UUID fixtures, cleaned up by their own ids; it never resets or reseeds the database. The seed updates fixed records, so do not rerun it just to refresh Home dates in an existing database. Existing past seed events correctly produce an empty upcoming catalog. For a manual smoke test, create isolated future PUBLISHED fixtures with known ids and clean up only those fixtures; see the root README for list/details/empty/error-retry steps.
 
@@ -199,4 +214,4 @@ Every API error is normalized to this shape:
 }
 ```
 
-Health, Auth, Profile, Lobby creation and read-only Lobby endpoints are implemented. Other Lobby mutations, chat, moments, notifications and media APIs remain outside this stage; demo frontend records are kept separate from real lobbies.
+Health, Auth, Profile, Lobby creation, catalog/details and join/leave are implemented. Other Lobby mutations, chat, moments, notifications and media APIs remain outside this stage; demo frontend records are kept separate from real lobbies.

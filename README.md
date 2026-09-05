@@ -35,6 +35,8 @@ The frontend now uses these backend endpoints through one typed API client:
 - `GET /lobbies?scope=all|mine&limit=20&after=<opaque-cursor>`
 - `GET /lobbies/:id`
 - `POST /lobbies`
+- `POST /lobbies/:id/join`
+- `POST /lobbies/:id/leave`
 
 The access token exists only in application memory. On iOS and Android, the refresh token is stored with Expo SecureStore. On web, the refresh token is intentionally kept in memory and is never written to `localStorage`, so a browser-page refresh requires signing in again.
 
@@ -54,7 +56,7 @@ If reconciliation temporarily fails, use **Retry recovery / Повторить �
 
 **Restart limitation:** a timeout is an in-memory safety boundary, not proof of durable invalidation. Pending/unknown persistent records are not restored, and a new runtime never clears them merely because its WeakMap is empty. However, if a delayed `committed` write physically completes while revocation/tombstone writes are unavailable, a new runtime can observe matching committed credentials. Without confirmed durable cleanup (or confirmed server revocation), absence of session restoration after restart cannot be guaranteed. The regression suite explicitly covers this limit. If the process dies with an unresolved pending writer and no terminal proof, recovery cannot safely unlock it automatically. No extra markers are added to claim a stronger guarantee.
 
-Profile name, bio, city, country code, and extroversion level are backed by `/users/me`. Home's upcoming catalog, Your lobbies / View all, lobby details and Create Lobby use PostgreSQL through the same authenticated ApiClient. Avatar, gallery, stats, Search, Chat, Moments and Activity remain explicitly labeled demos. Real joining/leaving, chat, editing/deleting lobbies and Media are not implemented.
+Profile name, bio, city, country code, and extroversion level are backed by `/users/me`. Home's upcoming catalog, Your lobbies / View all, lobby details and Create Lobby use PostgreSQL through the same authenticated ApiClient. Avatar, gallery, stats, Search, Chat, Moments and Activity remain explicitly labeled demos. Real joining/leaving now works. Chat, invitations, notifications, organizer transfer, cancellation, editing/deleting lobbies and Media are not implemented.
 
 ### Run Auth/Profile in Expo Web
 
@@ -103,13 +105,13 @@ Both languages are declared in the Expo native config. These native settings tak
 
 UI translations and localized demo content live in `src/i18n/translations.ts`. Future user-authored posts, names and lobby titles should remain as written, not be translated automatically.
 
-## Home: real catalog and read-only details
+## Home: real catalog and membership
 
 “Upcoming lobbies” / “Предстоящие лобби” loads only future PUBLISHED events, ordered by `startsAt ASC, id ASC`, in pages of 20. Refresh replaces the list; Load more appends the next cursor page. Loading, empty, error/retry and pagination-error states never substitute demo records. There is no geographic search or fabricated distance.
 
 Titles and descriptions are literal user-authored text, not translation keys. Schedule labels use the event's IANA `timeZone`; countdowns use the absolute ISO `startsAt` and do not restart on rerender. Images are category placeholders until Media is available. Counts include JOINED members only, and a membership badge identifies the current user's JOINED membership. The group gauge averages real JOINED users' extroversion scores, rounds to the nearest 0.5 (ties upward), and is hidden for an empty group. It is a group aggregate, not invented sample data.
 
-Tap a real card to fetch read-only details from `/lobbies/:id`. Join and Chat are explicitly disabled; real ids never enter demo joining or mock conversations. A published past event remains viewable by id, but unpublished/missing details show an unavailable state. Lists/details discard late results after logout, account switch or a newer load. The authenticated app tree and local demo conversations reset on account switch.
+Tap a real card to fetch details from `/lobbies/:id` and join/leave as a regular participant before the event starts. The organizer cannot leave. Chat remains explicitly disabled; real ids never enter demo joining or mock conversations. A published past event remains viewable by id, but unpublished/missing details show an unavailable state. Lists/details discard late results after logout, account switch or a newer load. The authenticated app tree and local demo conversations reset on account switch.
 
 Cursor pages are not a database snapshot: events may start or be edited between requests; Refresh obtains a fresh catalog. Existing seed events may already be in the past, so an empty catalog can be correct. Do not reseed/reset an existing database to populate Home: use isolated future test lobbies with known ids, and remove only those fixtures afterward.
 
@@ -121,9 +123,9 @@ Home's compact personal section and the full “View all” screen each request 
 
 Mine is not filtered from the first all page: an event far beyond that page still appears in the personal query. Each list owns its items, cursor, loading/error state and request generation; refreshing or paging one does not append to or fail the other. Both use pages of 20 with stable startsAt/id order. Home offers Refresh, View all and Load more; the full screen offers Refresh and Load more. The empty state offers Create lobby. No loaded-row count is presented as a total.
 
-Personal cards open the same real read-only details, never a mock chat. Group counts and mean extroversion still use **all** JOINED members. Returning from View all reloads Home's lists; returning after successful creation also reloads both scopes and opens the new id even if absent from their first pages. Logout/account switch discards list state and late reload/page results. No demo fallback exists.
+Personal cards open the same real details with membership actions, never a mock chat. Group counts and mean extroversion still use **all** JOINED members. Returning from View all reloads Home's lists; returning after successful creation also reloads both scopes and opens the new id even if absent from their first pages. Logout/account switch discards list state and late reload/page results. No demo fallback exists.
 
-Browser regression: create an isolated lobby → Home personal section → View all → details → logout/relogin → verify membership persists. Sign in as a different isolated user: the lobby may appear in all, but not mine without their own JOINED membership. Also test the empty/Create state and Refresh → error → Retry by temporarily stopping only the local API. Use known fixture ids; never reset/reseed or modify pre-existing records. Joining/leaving, completed-event history, editing/deleting, real chats/search and Media remain unavailable.
+Browser regression: create an isolated lobby → Home personal section → View all → details → logout/relogin → verify membership persists. Sign in as a different isolated user: the lobby may appear in all, but not mine without their own JOINED membership. Also test the empty/Create state and Refresh → error → Retry by temporarily stopping only the local API. Use known fixture ids; never reset/reseed or modify pre-existing records. Completed-event history, editing/deleting, real chats/search and Media remain unavailable.
 
 ## Create a real lobby
 
@@ -134,6 +136,18 @@ Submission uses the existing ApiClient/session and a synchronous double-submit l
 Errors preserve the draft while the form stays mounted. An ambiguous network/server/response error warns that creation might already have committed: **check Home before manually submitting again**. There is no automatic POST retry for those errors and no idempotency key in this stage; a deliberate repeated request can create a duplicate. The existing bounded refresh/retry after an explicit `401 INVALID_ACCESS_TOKEN` remains enabled. Closing the form discards its local draft. Logout/account switch/unmount invalidates late UI callbacks; the server may already have created the old account's lobby, but its late response cannot navigate or populate the new account's UI.
 
 For browser smoke testing, create a uniquely named test lobby, verify Home → details and the organizer's `1 / capacity` count, then sign out/in and open it again from the catalog. Use only isolated test users/records and clean up by their known ids; no database reset or full reseed is required. Page reload still requires sign-in on web (refresh token is memory-only).
+
+## Real membership: join and leave
+
+Details use explicit server `membershipStatus` (null/JOINED/LEFT/REMOVED) and `isOrganizer`, never an organizer guess based on isJoined. Join appears for a nonmember or LEFT member with space; an ordinary JOINED participant can leave before startsAt. The organizer, excluded users, full lobbies and started events show a disabled action with a localized reason. There are no invitations, organizer transfer or event cancellation in this stage.
+
+Both actions use the existing Bearer ApiClient. A synchronous UI lock prevents double/opposite taps until the response and verification GET complete. No membership change is shown optimistically. A network/ambiguous failure is **not** success: the UI explains the uncertainty and rechecks GET. If verification fails, actions stay disabled until Refresh/Retry succeeds. A later explicit retry is allowed; no automatic network POST retry is made. The existing bounded auth-refresh retry after INVALID_ACCESS_TOKEN remains.
+
+Each ApiClient has a shared invalidation channel (no credentials or page cache). A membership request's completion/error invalidates all mounted catalog, compact personal and full personal stores and details. List generations advance synchronously, so earlier reload/page results cannot restore old counts or memberships. Unmounted lists load afresh; other devices/users see changes on their next load/Refresh (no push notifications or polling). Late responses after logout/account switch are rejected before invalidating the new account. SessionCoordinator and storage/recovery protocols are unchanged.
+
+Home ↔ View all explicitly expands navCompact on both transitions, including a short destination with no upward scroll possible. The scroll algorithm itself is unchanged.
+
+Browser regression with two isolated users: organizer creates → second user opens the catalog card and joins → Home and View all show their JOINED event → leaving removes it from both mine lists → organizer Refresh shows the updated count. Check the organizer's disabled leave action and the absent real chat action. Only test-created records are cleaned up by known ids.
 
 ## Home demo tools
 
@@ -149,7 +163,7 @@ Home has a compact header with a white magnifying glass on a dark circular backg
 
 ## Chats (demo)
 
-The white paper-plane button on Home opens a full-screen chat list; the Chats header contains only Back and its title, without a duplicate paper-plane icon. It starts with “Beer tonight” and “CS2 squad”, using demo photos and member counts, independent of real Home memberships. Joining another lobby adds a chat row; event start times do not remove existing rows. Tap any active or archived row to open its mock conversation. Back from a conversation opened this way returns to the list. Home's real “Your lobbies” never opens a mock conversation.
+The white paper-plane button on Home opens a full-screen chat list; the Chats header contains only Back and its title, without a duplicate paper-plane icon. It starts with “Beer tonight” and “CS2 squad”, using demo photos and member counts, independent of real Home memberships. Joining another **demo** lobby adds a mock chat row; event start times do not remove existing rows. Tap any active or archived row to open its mock conversation. Back from a conversation opened this way returns to the list. Home's real “Your lobbies” never opens a mock conversation.
 
 Chats are grouped below two label-free 16px status markers without divider lines: a red dot with a visible size/brightness pulse and outward wave for active memberships, and a still grey dot for inactive demo chats (a past cinema night and hike). The status labels remain available to screen readers. Reduce Motion uses a slower brightness-only pulse: bright red for most of the cycle with a brief, clearly visible dip, without scaling or travelling waves. Animation pauses in the background and stops when the screen closes. Historical fixtures have separate ids and do not add Home memberships; starting an event alone does not mark its chat inactive.
 

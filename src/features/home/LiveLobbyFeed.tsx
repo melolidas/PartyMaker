@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useSyncExternalStore } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import type { LobbyScope } from '../../api/lobbyTypes';
+import { getLobbyInvalidation } from '../../api/lobbyInvalidation';
 import { useAuth } from '../../auth/AuthProvider';
 import { useI18n } from '../../i18n/LocalizationProvider';
 import { colors, radius } from '../../theme';
@@ -23,9 +24,10 @@ export function LiveLobbyFeed({ onSelect, scope = 'all', compact = false, onView
   const store = useMemo(() => new LobbyFeedStore((after) => lobbyApi.listLobbies(after, scope)), [lobbyApi, scope]);
   const snapshot = useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot);
   useEffect(() => {
+    const unsubscribe = getLobbyInvalidation(lobbyApi).subscribe(() => { void store.reload(); });
     store.setAccount(account);
-    return () => store.setAccount(null);
-  }, [store, account]);
+    return () => { unsubscribe(); store.setAccount(null); };
+  }, [store, account, lobbyApi]);
   // Do not show even one render of the previous account while effects clean up.
   const state = snapshot.account === account ? snapshot : emptyLobbyFeed(account);
   const idPrefix = scope === 'mine' ? 'mine-lobbies' : 'lobbies';

@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useSyncExternalStore } from 'react';
 import { ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import type { Lobby } from '../../api/lobbyTypes';
+import { getLobbyInvalidation } from '../../api/lobbyInvalidation';
+import { emptyLobbyDetails, LobbyDetailsStore, membershipAction } from './lobbyDetails';
 import { ApiClientError } from '../../api/errors';
 import { useAuth } from '../../auth/AuthProvider';
 import { useI18n } from '../../i18n/LocalizationProvider';
@@ -10,20 +11,18 @@ import { LiveLobbyMetadata, LobbyCategoryPlaceholder } from './LiveLobbyCard';
 export function LiveLobbyDetails({ id, onClose }: { id: string; onClose: () => void }) {
   const { lobbyApi, user, storageRecoveryRequired } = useAuth();
   const { t } = useI18n();
-  const [retry, setRetry] = useState(0);
-  const [result, setResult] = useState<{ account: string; id: string; lobby?: Lobby; error?: unknown } | null>(null);
-  const account = storageRecoveryRequired ? null : user?.id;
+  const account = storageRecoveryRequired ? null : user?.id ?? null;
+  const store = useMemo(() => new LobbyDetailsStore(lobbyApi), [lobbyApi]);
+  const snapshot = useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot);
   useEffect(() => {
-    let active = true;
-    setResult(null);
-    if (account) void lobbyApi.getLobby(id).then(
-      (lobby) => { if (active) setResult({ account, id, lobby }); },
-      (error: unknown) => { if (active) setResult({ account, id, error }); },
-    );
-    return () => { active = false; };
-  }, [lobbyApi, account, id, retry]);
-  const current = account && result?.account === account && result.id === id ? result : null;
-  const lobby = current?.lobby;
+    const unsubscribe = getLobbyInvalidation(lobbyApi).subscribe(() => { void store.reload(); });
+    store.setContext(account, id);
+    return () => { unsubscribe(); store.setContext(null, id); };
+  }, [store, lobbyApi, account, id]);
+  const current = snapshot.account === account && snapshot.id === id ? snapshot : emptyLobbyDetails(account, id);
+  const lobby = current.lobby;
+  const intent = lobby ? membershipAction(lobby) : null;
+  const busy = current.loading || current.mutating;
   return <Modal visible transparent animationType="fade" onRequestClose={onClose}>
     <View style={styles.overlay}>
       <View style={styles.sheet}>
@@ -31,17 +30,25 @@ export function LiveLobbyDetails({ id, onClose }: { id: string; onClose: () => v
           <Pressable accessibilityRole="button" accessibilityLabel={t('common.close')} onPress={onClose}><Text style={styles.close}>{t('common.close')}</Text></Pressable>
         </View>
         <ScrollView contentContainerStyle={styles.content}>
-          {!current ? <ActivityIndicator testID="lobby-details-loading" color={colors.text} /> : null}
-          {current?.error ? <View testID="lobby-details-error" style={styles.content}>
+          {current.loading && !lobby ? <ActivityIndicator testID="lobby-details-loading" color={colors.text} /> : null}
+          {current.error ? <View testID="lobby-details-error" style={styles.content}>
             <Text style={styles.muted}>{t(current.error instanceof ApiClientError && current.error.code === 'LOBBY_NOT_FOUND' ? 'lobbies.notFound' : 'lobbies.loadError')}</Text>
-            <Pressable accessibilityRole="button" onPress={() => setRetry((value) => value + 1)}><Text style={styles.close}>{t('auth.retry')}</Text></Pressable>
+            <Pressable accessibilityRole="button" disabled={busy} onPress={() => void store.reload()}><Text style={styles.close}>{t('auth.retry')}</Text></Pressable>
           </View> : null}
           {lobby ? <>
             <LobbyCategoryPlaceholder category={lobby.category} />
             <LiveLobbyMetadata lobby={lobby} />
             <Text testID="live-lobby-description" style={styles.description}>{lobby.description}</Text>
-            <Text style={styles.muted}>{t('lobbies.readOnly')}</Text>
-            <Pressable disabled accessibilityRole="button" accessibilityState={{ disabled: true }} style={styles.disabled}><Text style={styles.muted}>{t('lobbies.joinUnavailable')}</Text></Pressable>
+            {intent?.reason ? <Text testID="membership-reason" style={styles.muted}>{t(intent.reason)}</Text> : null}
+            {current.actionError ? <Text testID="membership-error" accessibilityLiveRegion="polite" style={styles.muted}>{t(current.actionError)}</Text> : null}
+            <Pressable testID="membership-action" disabled={busy || !!current.error || !intent?.action} accessibilityRole="button"
+              accessibilityState={{ disabled: busy || !!current.error || !intent?.action, busy }}
+              onPress={() => void store.changeMembership()} style={[styles.action, (busy || !!current.error || !intent?.action) && styles.dimmed]}>
+              {current.mutating ? <ActivityIndicator color={colors.text} /> : <Text style={styles.close}>{t(intent?.label ?? 'membership.unavailable')}</Text>}
+            </Pressable>
+            <Pressable testID="membership-refresh" disabled={busy} accessibilityRole="button" onPress={() => void store.reload()}>
+              <Text style={styles.close}>{t(current.loading ? 'membership.checking' : 'lobbies.reload')}</Text>
+            </Pressable>
             <Pressable disabled accessibilityRole="button" accessibilityState={{ disabled: true }} style={styles.disabled}><Text style={styles.muted}>{t('lobbies.chatUnavailable')}</Text></Pressable>
           </> : null}
         </ScrollView>
@@ -59,5 +66,7 @@ const styles = StyleSheet.create({
   content: { gap: 16 },
   description: { color: colors.text, fontSize: 15, lineHeight: 23 },
   muted: { color: colors.muted, fontSize: 13, lineHeight: 19 },
+  dimmed: { opacity: 0.6 },
+  action: { padding: 3, alignItems: 'center', borderColor: colors.border, borderWidth: 1, borderRadius: radius.medium },
   disabled: { opacity: 0.6, padding: 13, alignItems: 'center', borderColor: colors.border, borderWidth: 1, borderRadius: radius.medium },
 });

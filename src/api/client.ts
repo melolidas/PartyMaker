@@ -1,4 +1,5 @@
 import { getApiBaseUrl } from './config';
+import { getLobbyInvalidation } from './lobbyInvalidation';
 import type { CreateLobbyInput, Lobby, LobbyPage, LobbyScope } from './lobbyTypes';
 import {
   ApiClientError,
@@ -177,6 +178,20 @@ export class ApiClient {
 
   getLobby(id: string): Promise<Lobby> {
     return this.protectedRequest<Lobby>(`/lobbies/${encodeURIComponent(id)}`, { method: 'GET' });
+  }
+
+  joinLobby(id: string): Promise<Lobby> { return this.changeLobbyMembership(id, 'join'); }
+  leaveLobby(id: string): Promise<Lobby> { return this.changeLobbyMembership(id, 'leave'); }
+
+  private async changeLobbyMembership(id: string, action: 'join' | 'leave'): Promise<Lobby> {
+    const session = this.sessionCoordinator.capturePublishedSession();
+    try {
+      return await this.protectedRequestForSession<Lobby>(session, `/lobbies/${encodeURIComponent(id)}/${action}`, { method: 'POST' });
+    } finally {
+      // Also refresh after an uncertain response. Never invalidate the next account.
+      // List subscribers synchronously advance their generation before old GETs settle.
+      if (this.sessionCoordinator.isSessionCurrent(session)) getLobbyInvalidation(this).invalidate();
+    }
   }
 
   createLobby(input: CreateLobbyInput): Promise<Lobby> {

@@ -13,13 +13,19 @@ export type Lobby = {
   capacity: number;
   joinedCount: number;
   isJoined: boolean;
+  membershipStatus: 'JOINED' | 'LEFT' | 'REMOVED' | null;
+  isOrganizer: boolean;
   groupExtroversionLevel: number | null;
 };
 
 export type LobbyPage = { items: Lobby[]; nextCursor: string | null };
 export type LobbyScope = 'all' | 'mine';
 export type CreateLobbyInput = Pick<Lobby, 'title' | 'description' | 'category' | 'startsAt' | 'timeZone' | 'capacity' | 'isOnline' | 'venueName'>;
-export type LobbyApi = LobbyReadApi & { createLobby: (input: CreateLobbyInput) => Promise<Lobby> };
+export type LobbyApi = LobbyReadApi & {
+  createLobby: (input: CreateLobbyInput) => Promise<Lobby>;
+  joinLobby: (id: string) => Promise<Lobby>;
+  leaveLobby: (id: string) => Promise<Lobby>;
+};
 export type LobbyReadApi = {
   listLobbies: (after?: string, scope?: LobbyScope) => Promise<LobbyPage>;
   getLobby: (id: string) => Promise<Lobby>;

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useContext, useEffect, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { Outfit_600SemiBold } from '@expo-google-fonts/outfit/600SemiBold';
 import { useFonts } from 'expo-font';
@@ -11,6 +11,7 @@ import { PersonalLobbiesScreen } from './PersonalLobbiesScreen';
 import { SearchModal } from '../features/search/SearchModal';
 import { useI18n } from '../i18n/LocalizationProvider';
 import { colors } from '../theme';
+import { NavScrollContext } from '../navigation/NavScrollContext';
 
 export function HomeScreen({ initialLobbyId = null, onInitialLobbyConsumed, onCreate }: {
   initialLobbyId?: string | null; onInitialLobbyConsumed?: () => void; onCreate?: () => void;
@@ -21,8 +22,13 @@ export function HomeScreen({ initialLobbyId = null, onInitialLobbyConsumed, onCr
   useEffect(() => { if (initialLobbyId) onInitialLobbyConsumed?.(); }, [initialLobbyId, onInitialLobbyConsumed]);
   const [chatsOpen, setChatsOpen] = useState(false);
   const [personalOpen, setPersonalOpen] = useState(false);
+  const setNavCompact = useContext(NavScrollContext);
+  const showPersonal = (open: boolean) => {
+    setNavCompact(false);
+    setPersonalOpen(open);
+  };
   const [searchOpen, setSearchOpen] = useState(false);
-  if (personalOpen) return <PersonalLobbiesScreen onClose={() => setPersonalOpen(false)} onCreate={onCreate} />;
+  if (personalOpen) return <PersonalLobbiesScreen onClose={() => showPersonal(false)} onCreate={onCreate} />;
 
   return (
     <>
@@ -61,7 +67,7 @@ export function HomeScreen({ initialLobbyId = null, onInitialLobbyConsumed, onCr
 
         <Text style={styles.cardMeta}>{t('lobbies.demoTools')}</Text>
         <LiveLobbyFeed onSelect={setSelectedLobbyId} />
-        <LiveLobbyFeed scope="mine" compact onSelect={setSelectedLobbyId} onViewAll={() => setPersonalOpen(true)} onCreate={onCreate} />
+        <LiveLobbyFeed scope="mine" compact onSelect={setSelectedLobbyId} onViewAll={() => showPersonal(true)} onCreate={onCreate} />
 
       </Screen>
       {selectedLobbyId ? <LiveLobbyDetails key={selectedLobbyId} id={selectedLobbyId} onClose={() => setSelectedLobbyId(null)} /> : null}

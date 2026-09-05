@@ -32,7 +32,7 @@ test('mine uses the Bearer membership and preserves whole-group statistics and t
   assert.equal(dto.joinedCount, 2);
   assert.equal(dto.groupExtroversionLevel, 1.5);
   assert.equal(dto.isJoined, true);
-  assert.deepEqual(Object.keys(dto).sort(), ['id', 'title', 'description', 'category', 'startsAt', 'timeZone', 'isOnline', 'venueName', 'capacity', 'joinedCount', 'isJoined', 'groupExtroversionLevel'].sort());
+  assert.deepEqual(Object.keys(dto).sort(), ['id', 'title', 'description', 'category', 'startsAt', 'timeZone', 'isOnline', 'venueName', 'capacity', 'joinedCount', 'isJoined', 'membershipStatus', 'isOrganizer', 'groupExtroversionLevel'].sort());
   assert.doesNotMatch(JSON.stringify(own.body), /passwordHash|tokenHash|refreshToken|storageKey|@example\.test/);
   assert.ok(!(own.body as LobbyPageResponseDto).items.some((item) => item.id === sorted[1]), 'organizerId alone is not membership');
 
@@ -208,7 +208,7 @@ test('details and catalog use an explicit safe DTO without members, media storag
   const response = await request(app.getHttpServer()).get(`/api/v1/lobbies/${sorted[0]}`).auth(access, { type: 'bearer' }).expect(200);
   const list = await request(app.getHttpServer()).get('/api/v1/lobbies').query({ after: cursorBefore }).auth(access, { type: 'bearer' }).expect(200);
   for (const dto of [response.body, ...(list.body as LobbyPageResponseDto).items]) {
-    assert.deepEqual(Object.keys(dto).sort(), ['id', 'title', 'description', 'category', 'startsAt', 'timeZone', 'isOnline', 'venueName', 'capacity', 'joinedCount', 'isJoined', 'groupExtroversionLevel'].sort());
+    assert.deepEqual(Object.keys(dto).sort(), ['id', 'title', 'description', 'category', 'startsAt', 'timeZone', 'isOnline', 'venueName', 'capacity', 'joinedCount', 'isJoined', 'membershipStatus', 'isOrganizer', 'groupExtroversionLevel'].sort());
     assert.doesNotMatch(JSON.stringify(dto), /passwordHash|tokenHash|refreshToken|storageKey|@example\.test/);
   }
   assert.equal(response.body.timeZone, 'Asia/Bishkek');
@@ -282,7 +282,7 @@ test('creation trims fields, publishes a safe DTO and creates exactly one ORGANI
   const dto = response.body as LobbyResponseDto;
   assert.equal(dto.title, input.title); assert.equal(dto.description, 'User text'); assert.equal(dto.venueName, 'Test venue');
   assert.equal(dto.joinedCount, 1); assert.equal(dto.isJoined, true); assert.equal(dto.groupExtroversionLevel, 1);
-  assert.deepEqual(Object.keys(dto).sort(), ['id', 'title', 'description', 'category', 'startsAt', 'timeZone', 'isOnline', 'venueName', 'capacity', 'joinedCount', 'isJoined', 'groupExtroversionLevel'].sort());
+  assert.deepEqual(Object.keys(dto).sort(), ['id', 'title', 'description', 'category', 'startsAt', 'timeZone', 'isOnline', 'venueName', 'capacity', 'joinedCount', 'isJoined', 'membershipStatus', 'isOrganizer', 'groupExtroversionLevel'].sort());
   assert.doesNotMatch(JSON.stringify(dto), /passwordHash|tokenHash|refreshToken|storageKey|@example\.test/);
   const row = await prisma.lobby.findUniqueOrThrow({ where: { id: dto.id }, include: { members: true } });
   assert.equal(row.organizerId, users[0]); assert.equal(row.status, 'PUBLISHED'); assert.equal(row.minParticipants, 2);

@@ -150,6 +150,7 @@ describe('Auth + Profile vertical slice', { concurrency: false }, () => {
     assert.ok(body.refreshToken.length >= 43);
     assertNoStoredSecrets(body);
     assert.deepEqual(Object.keys(body.user).sort(), [
+      'avatar',
       'bio',
       'city',
       'countryCode',

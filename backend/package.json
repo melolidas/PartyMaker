@@ -11,7 +11,7 @@
     "start:prod": "node dist/main.js",
     "lint": "eslint \"{src,prisma,test}/**/*.ts\"",
     "typecheck": "tsc --noEmit",
-    "test": "tsc --project tsconfig.test.json --pretty false && node --test --test-concurrency=1 .test-dist/test/cors.test.js .test-dist/test/app.e2e.test.js .test-dist/test/auth-profile.e2e.test.js .test-dist/test/lobbies.e2e.test.js .test-dist/test/lobby-membership.e2e.test.js .test-dist/test/lobby-search.e2e.test.js .test-dist/test/lobby-messages.e2e.test.js .test-dist/test/chats.e2e.test.js .test-dist/test/lobby-cancel.e2e.test.js",
+    "test": "tsc --project tsconfig.test.json --pretty false && node --test --test-concurrency=1 .test-dist/test/cors.test.js .test-dist/test/app.e2e.test.js .test-dist/test/auth-profile.e2e.test.js .test-dist/test/lobbies.e2e.test.js .test-dist/test/lobby-membership.e2e.test.js .test-dist/test/lobby-search.e2e.test.js .test-dist/test/lobby-messages.e2e.test.js .test-dist/test/chats.e2e.test.js .test-dist/test/lobby-cancel.e2e.test.js .test-dist/test/avatars.e2e.test.js",
     "test:cors": "tsc --project tsconfig.test.json --pretty false && node --test .test-dist/test/cors.test.js",
     "prisma:generate": "prisma generate",
     "prisma:validate": "prisma validate",
@@ -37,13 +37,15 @@
     "dotenv": "17.2.3",
     "joi": "18.2.8",
     "reflect-metadata": "0.2.2",
-    "rxjs": "7.8.2"
+    "rxjs": "7.8.2",
+    "sharp": "0.35.4"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
     "@nestjs/cli": "11.0.24",
     "@nestjs/testing": "11.2.3",
     "@types/express": "5.0.6",
+    "@types/multer": "2.2.0",
     "@types/node": "20.19.33",
     "@types/supertest": "6.0.3",
     "eslint": "10.10.0",

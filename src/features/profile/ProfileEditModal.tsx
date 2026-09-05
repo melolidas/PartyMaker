@@ -43,7 +43,8 @@ export function ProfileEditModal({ visible, profile, onClose }: Props) {
     setCity(profile.city ?? '');
     setCountryCode(profile.countryCode ?? '');
     setErrorKey(null);
-  }, [profile, visible]);
+  // Do not reset an unsaved text draft when an independent avatar/level response arrives.
+  }, [profile.id, visible]);
 
   const close = () => {
     if (!saving) onClose();

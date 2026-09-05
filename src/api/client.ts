@@ -20,6 +20,8 @@ import {
   type SessionLease,
 } from './sessionCoordinator';
 import type {
+  Avatar,
+  AvatarUpload,
   AuthResponse,
   LoginInput,
   RefreshTokenStorage,
@@ -38,6 +40,8 @@ type ApiClientOptions = {
 type RequestOptions = {
   method: 'GET' | 'POST' | 'PATCH' | 'PUT';
   body?: unknown;
+  // Rebuild for every actual fetch, including the existing single auth rejection retry.
+  formData?: () => FormData;
 };
 
 export class ApiClient {
@@ -235,6 +239,28 @@ export class ApiClient {
       method: 'PATCH',
       body: input,
     });
+  }
+
+  getAvatarUrl(id: string): string {
+    return `${this.baseUrl()}/media/avatars/${encodeURIComponent(id)}`;
+  }
+
+  async uploadAvatar(input: AvatarUpload): Promise<Avatar> {
+    const result = await this.protectedRequest<{ avatar: Avatar }>('/users/me/avatar', {
+      method: 'POST', formData: () => {
+        const form = new FormData();
+        const name = input.mimeType === 'image/png' ? 'avatar.png' : 'avatar.jpg';
+        if (input.file) form.append('file', input.file, name);
+        else form.append('file', { uri: input.uri, type: input.mimeType, name } as unknown as Blob);
+        return form;
+      },
+    });
+    const avatar = result?.avatar;
+    if (!avatar || typeof avatar.id !== 'string' || !/^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(avatar.id)
+      || avatar.mimeType !== 'image/jpeg' || avatar.width !== 512 || avatar.height !== 512) {
+      throw new ApiClientError({ code: 'INVALID_API_RESPONSE', statusCode: 0, message: 'Avatar replacement is unconfirmed' });
+    }
+    return avatar;
   }
 
   updateExtroversion(level: number): Promise<UserProfile> {
@@ -516,7 +542,7 @@ export class ApiClient {
     const headers: Record<string, string> = {
       Accept: 'application/json',
     };
-    if (options.body !== undefined) headers['Content-Type'] = 'application/json';
+    if (!options.formData && options.body !== undefined) headers['Content-Type'] = 'application/json';
     if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
 
     let response: Response;
@@ -524,7 +550,7 @@ export class ApiClient {
       response = await this.fetchImpl(`${apiBaseUrl}${path}`, {
         method: options.method,
         headers,
-        ...(options.body !== undefined
+        ...(options.formData ? { body: options.formData() } : options.body !== undefined
           ? { body: JSON.stringify(options.body) }
           : {}),
       });

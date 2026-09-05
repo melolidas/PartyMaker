@@ -15,6 +15,8 @@ import {
   normalizeExtroversionLevel,
 } from '../features/profile/extroversion';
 import { ProfileEditModal } from '../features/profile/ProfileEditModal';
+import { AvatarImage } from '../features/profile/AvatarImage';
+import { AvatarEditor } from '../features/profile/AvatarEditor';
 import { saveExtroversionOptimistically } from '../features/profile/saveExtroversion';
 import { useI18n } from '../i18n/LocalizationProvider';
 import { TranslationKey } from '../i18n/translations';
@@ -46,6 +48,7 @@ export function ProfileScreen() {
   const [savingLevel, setSavingLevel] = useState(false);
   const [extroversionErrorKey, setExtroversionErrorKey] = useState<TranslationKey | null>(null);
   const [editingProfile, setEditingProfile] = useState(false);
+  const [editingAvatar, setEditingAvatar] = useState(false);
   const visibleLevel = editing ? draftLevel : level;
   const visual = getExtroversionVisual(visibleLevel);
   const band = getExtroversionBand(visibleLevel);
@@ -151,7 +154,7 @@ export function ProfileScreen() {
 
       <View style={styles.profileHeader}>
         <View style={styles.avatarWrap}>
-          <Image source={photos.party} style={styles.avatar} />
+          <AvatarImage avatar={user.avatar} />
           <Pressable
             style={styles.editButton}
             accessibilityRole="button"
@@ -187,6 +190,9 @@ export function ProfileScreen() {
         </View>
       </View>
 
+      <Pressable testID="change-avatar" accessibilityRole="button" onPress={() => setEditingAvatar(true)} disabled={storageRecoveryRequired} style={styles.avatarAction}>
+        <Text style={styles.editExtroversionText}>{t('avatar.change')}</Text>
+      </Pressable>
       {user.bio ? <Text style={styles.bio}>{user.bio}</Text> : null}
 
       {editing ? (
@@ -276,6 +282,7 @@ export function ProfileScreen() {
         ))}
       </View>
       </Screen>
+      {editingAvatar ? <AvatarEditor key={user.id} onClose={() => setEditingAvatar(false)} /> : null}
       <ProfileEditModal
         visible={editingProfile}
         profile={user}
@@ -295,6 +302,7 @@ function Stat({ value, label }: { value: string; label: string }) {
 }
 
 const styles = StyleSheet.create({
+  avatarAction: { alignSelf: 'flex-start', padding: 10, marginTop: 6 },
   content: {
     paddingHorizontal: 12,
   },
@@ -324,13 +332,6 @@ const styles = StyleSheet.create({
   },
   avatarWrap: {
     position: 'relative',
-  },
-  avatar: {
-    width: 94,
-    height: 94,
-    borderRadius: 47,
-    borderWidth: 1,
-    borderColor: colors.border,
   },
   editButton: {
     position: 'absolute',

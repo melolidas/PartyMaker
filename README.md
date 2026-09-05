@@ -32,6 +32,8 @@ The frontend now uses these backend endpoints through one typed API client:
 - `GET /users/me`
 - `PATCH /users/me`
 - `PUT /users/me/extroversion`
+- `POST /users/me/avatar` (one multipart `file`)
+- `GET /media/avatars/:id` (public, currently assigned processed avatar only)
 - `GET /lobbies?scope=all|mine&q=<literal-search>&limit=20&after=<opaque-cursor>`
 - `GET /lobbies/:id`
 - `POST /lobbies`
@@ -58,7 +60,21 @@ If reconciliation temporarily fails, use **Retry recovery / Повторить �
 
 **Restart limitation:** a timeout is an in-memory safety boundary, not proof of durable invalidation. Pending/unknown persistent records are not restored, and a new runtime never clears them merely because its WeakMap is empty. However, if a delayed `committed` write physically completes while revocation/tombstone writes are unavailable, a new runtime can observe matching committed credentials. Without confirmed durable cleanup (or confirmed server revocation), absence of session restoration after restart cannot be guaranteed. The regression suite explicitly covers this limit. If the process dies with an unresolved pending writer and no terminal proof, recovery cannot safely unlock it automatically. No extra markers are added to claim a stronger guarantee.
 
-Profile name, bio, city, country code, and extroversion level are backed by `/users/me`. Home's upcoming catalog, Your lobbies / View all, Search, lobby details, Create Lobby, the paper-plane chat inbox and lobby text chat use PostgreSQL through the same authenticated ApiClient. Avatar, gallery, stats, Moments and Activity remain explicitly labeled demos. Real joining/leaving and organizer cancellation work, including from search results. Invitations, notifications, organizer transfer, editing/deleting lobbies and Media are not implemented.
+Profile name, bio, city, country code, extroversion level and avatar are backed by the API. Home's upcoming catalog, Your lobbies / View all, Search, lobby details, Create Lobby, the paper-plane chat inbox and lobby text chat use PostgreSQL through the same authenticated ApiClient. Gallery, stats, Moments and Activity remain demos. Real joining/leaving and organizer cancellation work, including from search results. Invitations, notifications, organizer transfer, editing/deleting lobbies and media other than profile avatars are not implemented.
+
+### Profile avatars: limited local Media slice
+
+Profile → **Change avatar / Изменить аватар** opens the photo library (one image, no camera/microphone), then a preview with explicit confirmation or cancellation. JPEG/PNG only: 5 MiB maximum input, 20 million decoded pixels, one static frame. The server verifies the actual image and matching MIME, auto-orients, crops to 512×512 and writes JPEG without original EXIF/GPS/metadata. The original is not saved. Missing/unloadable avatars use a neutral icon; the gallery and statistics remain labeled demo data.
+
+The avatar is **public**: anyone with its URL can download it without signing in. The URL comes from the existing configured API base, never a hardcoded host. Replaced/unassigned files are not served, but replacing an avatar cannot revoke already-downloaded public copies or an in-flight download. No avatar deletion feature is included.
+
+The same nullable `avatar: { id, width, height, mimeType }` is returned by the common user DTO in login/register/refresh and profile responses. Upload returns only `{ avatar }`. Avatar, text-profile and extroversion responses merge only their own fields; a late avatar read cannot undo a newer replacement. Closing the editor, logout and account switch discard late picker/upload/read results. Multipart uses fresh FormData for the existing single retry after an explicit `401 INVALID_ACCESS_TOKEN`, without manually setting Content-Type/boundary. Network/5xx/malformed responses never auto-retry or claim success: **Reload profile avatar**, inspect the confirmed image, then explicitly retry if needed. Reloading is not presented as confirmation of the earlier upload.
+
+Run the API from `backend/`; it creates `uploads/avatars` locally and needs write permission there. This folder is ignored by Git. PostgreSQL stores MediaAsset metadata and the avatar assignment; the filesystem stores only processed JPEGs. Files are prepared before a user-row-locked DB transaction changes the assignment. The old avatar remains assigned until commit. PostgreSQL and disk do **not** share an atomic transaction: uncertain DB failures deliberately retain prepared files. Old assets/files and crash-orphans are retained; automatic cleanup, quotas, shared/multi-instance storage, CDN and backups are not implemented. Do not indiscriminately delete old assets because they may have other relations. See [backend avatar contract](backend/README.md#profile-avatar-api) for validation/error details.
+
+Dependencies added for this slice: SDK-compatible `expo-image-picker`, backend `sharp`, and development-only `@types/multer`. The picker config disables camera/microphone permissions; native config changes require rebuilding a standalone/dev app. Expo Go uses its bundled picker. Browser regression: two isolated accounts, choose → preview/cancel → confirm → replace → sign out/in → verify persisted avatar and account separation. A browser check is not a physical-phone check.
+
+Verified locally in Expo Web with PostgreSQL: PNG selection/preview/cancellation, confirmed upload, JPEG replacement, persisted 512×512 image after sign-out/sign-in, separate avatars for two accounts, and the matching bottom-nav avatar. Only the two test accounts and their three processed files were removed afterward. Automated checks: frontend 284 tests/typecheck; backend 103 tests/typecheck/lint/build. A physical phone was not available for this check. Existing dependency versions were not upgraded; only the picker/image-processing dependencies and their transitive packages were added.
 
 ### Run Auth/Profile in Expo Web
 
@@ -92,7 +108,7 @@ Backend CORS defaults to no cross-origin permission. `CORS_ALLOWED_ORIGINS` acce
 - Moments social feed
 - Create Lobby: real form and atomic PostgreSQL creation with organizer membership
 - Activity notifications
-- Profile and photo gallery
+- Profile with real editable avatar and a separately labeled demo photo gallery
 
 ## Languages
 
@@ -111,7 +127,7 @@ UI translations and localized demo content live in `src/i18n/translations.ts`. F
 
 “Upcoming lobbies” / “Предстоящие лобби” loads only future PUBLISHED events, ordered by `startsAt ASC, id ASC`, in pages of 20. Refresh replaces the list; Load more appends the next cursor page. Loading, empty, error/retry and pagination-error states never substitute demo records. There is no geographic search or fabricated distance.
 
-Titles and descriptions are literal user-authored text, not translation keys. Schedule labels use the event's IANA `timeZone`; countdowns use the absolute ISO `startsAt` and do not restart on rerender. Images are category placeholders until Media is available. Counts include JOINED members only, and a membership badge identifies the current user's JOINED membership. The group gauge averages real JOINED users' extroversion scores, rounds to the nearest 0.5 (ties upward), and is hidden for an empty group. It is a group aggregate, not invented sample data.
+Titles and descriptions are literal user-authored text, not translation keys. Schedule labels use the event's IANA `timeZone`; countdowns use the absolute ISO `startsAt` and do not restart on rerender. Lobby images remain category placeholders; the avatar slice does not enable lobby photos. Counts include JOINED members only, and a membership badge identifies the current user's JOINED membership. The group gauge averages real JOINED users' extroversion scores, rounds to the nearest 0.5 (ties upward), and is hidden for an empty group. It is a group aggregate, not invented sample data.
 
 Tap a real card to fetch details from `/lobbies/:id` and join/leave as a regular participant before the event starts. The organizer cannot leave. JOINED participants can open the real text chat; real ids never enter demo joining or mock conversations. A published past event remains viewable by id, but unpublished/missing details show an unavailable state. Lists/details discard late results after logout, account switch or a newer load. The authenticated app tree and local demo conversations reset on account switch.
 
@@ -127,7 +143,7 @@ Mine is not filtered from the first all page: an event far beyond that page stil
 
 Personal cards open the same real details with membership actions, never a mock chat. Group counts and mean extroversion still use **all** JOINED members. Returning from View all reloads Home's lists; returning after successful creation also reloads both scopes and opens the new id even if absent from their first pages. Logout/account switch discards list state and late reload/page results. No demo fallback exists.
 
-Browser regression: create an isolated lobby → Home personal section → View all → details → logout/relogin → verify membership persists. Sign in as a different isolated user: the lobby may appear in all, but not mine without their own JOINED membership. Also test the empty/Create state and Refresh → error → Retry by temporarily stopping only the local API. Use known fixture ids; never reset/reseed or modify pre-existing records. Completed-event history, editing/deleting and Media remain unavailable.
+Browser regression: create an isolated lobby → Home personal section → View all → details → logout/relogin → verify membership persists. Sign in as a different isolated user: the lobby may appear in all, but not mine without their own JOINED membership. Also test the empty/Create state and Refresh → error → Retry by temporarily stopping only the local API. Use known fixture ids; never reset/reseed or modify pre-existing records. Completed-event history, editing/deleting and lobby/message media remain unavailable.
 
 ## Create a real lobby
 
@@ -163,7 +179,7 @@ Only the cancel endpoint's matching id/status confirms success. Then a localized
 
 Network/5xx/invalid responses are **unconfirmed**, not success. The open UI retains the target account/id/title independently of its loaded Lobby DTO and offers **Retry cancellation / Повторить отмену** with the same POST. An optional GET 404 or disappearance from lists is **not proof**. Retry remains available even after startsAt or while a verification GET is pending: the server distinguishes an already-CANCELLED no-op from a still-PUBLISHED started event. No automatic network retry is added; existing bounded auth-refresh retry remains. The pending target is memory-only and is discarded on close/unmount, lobby change, logout or account switch; late results cannot confirm/close another context.
 
-Browser regression (Expo Web + PostgreSQL): two isolated users create/join and exchange messages, organizer declines confirmation, then cancels; both users' refreshed lists/inbox exclude the event and the participant's open chat becomes unavailable. Verify history in the database before cleaning only those known fixture ids. Also exercise a committed cancellation whose successful response is replaced with a test 503: GET 404 must leave the retry UI open, and only a repeated POST 200 shows success without changing updatedAt. This browser check does not imply a physical-phone/native check. Restoration, organizer transfer, editing, archives, notifications and Media remain out of scope.
+Browser regression (Expo Web + PostgreSQL): two isolated users create/join and exchange messages, organizer declines confirmation, then cancels; both users' refreshed lists/inbox exclude the event and the participant's open chat becomes unavailable. Verify history in the database before cleaning only those known fixture ids. Also exercise a committed cancellation whose successful response is replaced with a test 503: GET 404 must leave the retry UI open, and only a repeated POST 200 shows success without changing updatedAt. This browser check does not imply a physical-phone/native check. Restoration, organizer transfer, editing, archives, notifications and lobby/message media remain out of scope.
 
 ## Remaining demo fixtures
 

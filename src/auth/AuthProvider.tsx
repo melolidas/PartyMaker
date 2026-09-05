@@ -13,6 +13,8 @@ import { ApiClient } from '../api/client';
 import { ApiClientError } from '../api/errors';
 import type { LobbyApi } from '../api/lobbyTypes';
 import type {
+  Avatar,
+  AvatarUpload,
   LoginInput,
   RegisterInput,
   UpdateProfileInput,
@@ -30,6 +32,9 @@ type AuthContextValue = {
   register: (input: RegisterInput) => Promise<void>;
   updateProfile: (input: UpdateProfileInput) => Promise<UserProfile>;
   updateExtroversion: (level: number) => Promise<UserProfile>;
+  uploadAvatar: (input: AvatarUpload, stillCurrent: () => boolean) => Promise<Avatar>;
+  refreshAvatar: (stillCurrent: () => boolean) => Promise<Avatar | null>;
+  getAvatarUrl: (id: string) => string;
   logout: () => Promise<void>;
   storageRecoveryRequired: boolean;
   recoveringSessionStorage: boolean;
@@ -45,6 +50,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [recoveringSessionStorage, setRecoveringSessionStorage] = useState(false);
   const storageRecoveryPromise = useRef<Promise<void> | null>(null);
   const uiAttemptId = useRef(0);
+  // Field ownership prevents full DTO responses from reverting independent profile edits.
+  const profileWrites = useRef({ avatar: 0, extroversionLevel: 0, displayName: 0, bio: 0, city: 0, countryCode: 0 });
   const [client] = useState(() => new ApiClient({
     refreshTokenStorage,
     onSessionCleared: ({ storageRecoveryRequired }) => {
@@ -110,16 +117,48 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [client]);
 
   const updateProfile = useCallback(async (input: UpdateProfileInput) => {
+    const attempt = uiAttemptId.current;
+    const fields = Object.keys(input) as (keyof UpdateProfileInput)[];
+    const owners = fields.map(key => ({ key, version: ++profileWrites.current[key] }));
     const updatedUser = await client.updateProfile(input);
-    setUser(updatedUser);
+    if (attempt === uiAttemptId.current) setUser(previous => {
+      if (attempt !== uiAttemptId.current || !previous || previous.id !== updatedUser.id) return previous;
+      const patch = Object.fromEntries(owners.filter(({ key, version }) => profileWrites.current[key] === version).map(({ key }) => [key, updatedUser[key]]));
+      return { ...previous, ...patch, updatedAt: previous.updatedAt > updatedUser.updatedAt ? previous.updatedAt : updatedUser.updatedAt };
+    });
     return updatedUser;
   }, [client]);
 
   const updateExtroversion = useCallback(async (level: number) => {
+    const attempt = uiAttemptId.current, version = ++profileWrites.current.extroversionLevel;
     const updatedUser = await client.updateExtroversion(level);
-    setUser(updatedUser);
+    if (attempt === uiAttemptId.current && version === profileWrites.current.extroversionLevel) {
+      setUser(previous => attempt !== uiAttemptId.current || version !== profileWrites.current.extroversionLevel || !previous || previous.id !== updatedUser.id ? previous : {
+        ...previous, extroversionLevel: updatedUser.extroversionLevel,
+        updatedAt: previous.updatedAt > updatedUser.updatedAt ? previous.updatedAt : updatedUser.updatedAt,
+      });
+    }
     return updatedUser;
   }, [client]);
+
+  const uploadAvatar = useCallback(async (input: AvatarUpload, stillCurrent: () => boolean) => {
+    const attempt = uiAttemptId.current, version = ++profileWrites.current.avatar;
+    const avatar = await client.uploadAvatar(input);
+    if (attempt === uiAttemptId.current && version === profileWrites.current.avatar && stillCurrent()) {
+      setUser(previous => previous && attempt === uiAttemptId.current && version === profileWrites.current.avatar && stillCurrent() ? { ...previous, avatar } : previous);
+    }
+    return avatar;
+  }, [client]);
+
+  const refreshAvatar = useCallback(async (stillCurrent: () => boolean) => {
+    const attempt = uiAttemptId.current, version = ++profileWrites.current.avatar;
+    const updatedUser = await client.getMe();
+    if (attempt === uiAttemptId.current && version === profileWrites.current.avatar && stillCurrent()) {
+      setUser(previous => previous?.id === updatedUser.id && attempt === uiAttemptId.current && version === profileWrites.current.avatar && stillCurrent() ? { ...previous, avatar: updatedUser.avatar } : previous);
+    }
+    return updatedUser.avatar;
+  }, [client]);
+  const getAvatarUrl = useCallback((id: string) => client.getAvatarUrl(id), [client]);
 
   const logout = useCallback(async () => {
     const attemptId = ++uiAttemptId.current;
@@ -166,6 +205,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     register,
     updateProfile,
     updateExtroversion,
+    uploadAvatar,
+    refreshAvatar,
+    getAvatarUrl,
     logout,
     storageRecoveryRequired,
     recoveringSessionStorage,
@@ -178,6 +220,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     register,
     updateProfile,
     updateExtroversion,
+    uploadAvatar,
+    refreshAvatar,
+    getAvatarUrl,
     logout,
     storageRecoveryRequired,
     recoveringSessionStorage,

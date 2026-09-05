@@ -1,6 +1,10 @@
 import { ApiProperty } from '@nestjs/swagger';
+import { AvatarDto } from '../../avatars/avatar.dto';
 
 export class UserResponseDto {
+  @ApiProperty({ type: AvatarDto, nullable: true })
+  avatar!: AvatarDto | null;
+
   @ApiProperty({ type: String, format: 'uuid' })
   id!: string;
 

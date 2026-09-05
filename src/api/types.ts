@@ -1,4 +1,8 @@
+export type Avatar = { id: string; width: number; height: number; mimeType: 'image/jpeg' };
+export type AvatarUpload = { uri: string; mimeType: 'image/jpeg' | 'image/png'; file?: Blob };
+
 export type UserProfile = {
+  avatar: Avatar | null;
   id: string;
   email: string;
   handle: string;

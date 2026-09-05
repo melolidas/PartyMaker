@@ -22,6 +22,7 @@ const {
 } = require('../.expo/auth-tests/auth/refreshTokenPersistence.js');
 
 const profile = {
+  avatar: null,
   id: '00000000-0000-4000-8000-000000000001',
   email: 'person@example.test',
   handle: 'person',
@@ -443,6 +444,53 @@ async function assertStorageFailure(outcome) {
   assert.ok(outcome.value instanceof ApiClientError);
   assert.equal(outcome.value.code, 'SESSION_STORAGE_ERROR');
 }
+
+test('AuthProvider merges avatar/text/extroversion independently and ignores an older avatar read', async () => {
+  const avatar = { id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', width: 512, height: 512, mimeType: 'image/jpeg' };
+  const next = { ...avatar, id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb' };
+  const text = createDeferred(), upload = createDeferred(), read = createDeferred();
+  let uploadCount = 0;
+  const h = createAuthScreenHarness({ async get() { return null; }, async set() {}, async clear() {} }, async (url, init) => {
+    if (url.endsWith('/auth/login')) return jsonResponse(200, authResponse('access', 'refresh'));
+    if (url.endsWith('/avatar')) return ++uploadCount === 1 ? upload.promise : jsonResponse(200, { avatar: next });
+    if (url.endsWith('/extroversion')) return jsonResponse(200, { ...profile, extroversionLevel: 8 });
+    if (init.method === 'PATCH') return text.promise;
+    return read.promise;
+  });
+  h.render(); await drainMicrotasks(120); h.render(); await h.auth().login({ email: 'fixture', password: 'fixture' }); h.render();
+  const saveText = h.auth().updateProfile({ displayName: 'New name', bio: 'New bio' });
+  const saveAvatar = h.auth().uploadAvatar({ uri: 'native-file', mimeType: 'image/jpeg', file: new Blob(['fixture']) }, () => true);
+  await h.auth().updateExtroversion(8); h.render();
+  upload.resolve(jsonResponse(200, { avatar })); await saveAvatar; h.render();
+  text.resolve(jsonResponse(200, { ...profile, displayName: 'New name', bio: 'New bio', avatar: null })); await saveText; h.render();
+  assert.equal(h.auth().user.avatar.id, avatar.id); assert.equal(h.auth().user.displayName, 'New name'); assert.equal(h.auth().user.bio, 'New bio'); assert.equal(h.auth().user.extroversionLevel, 8);
+  const oldRead = h.auth().refreshAvatar(() => true);
+  await h.auth().uploadAvatar({ uri: 'native-file', mimeType: 'image/jpeg', file: new Blob(['next']) }, () => true); h.render();
+  read.resolve(jsonResponse(200, { ...profile, avatar })); await oldRead; h.render();
+  assert.equal(h.auth().user.avatar.id, next.id); assert.equal(h.auth().user.displayName, 'New name'); assert.equal(h.auth().user.extroversionLevel, 8);
+});
+
+test('AuthProvider never applies avatar results from a closed screen, logout or another account', async () => {
+  const avatar = { id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', width: 512, height: 512, mimeType: 'image/jpeg' };
+  for (const transition of ['close', 'logout', 'account']) {
+    const late = createDeferred(); let screenCurrent = true, loginCount = 0;
+    const h = createAuthScreenHarness({ async get() { return null; }, async set() {}, async clear() {} }, async (url) => {
+      if (url.endsWith('/auth/login')) return jsonResponse(200, authResponse('access', 'refresh', ++loginCount === 1 ? profile : { ...profile, id: 'user-b' }));
+      if (url.endsWith('/auth/logout')) return noContentResponse();
+      return late.promise;
+    });
+    h.render(); await drainMicrotasks(120); h.render(); await h.auth().login({}); h.render();
+    const outcome = observe(h.auth().uploadAvatar({ uri: 'file', mimeType: 'image/jpeg', file: new Blob(['fixture']) }, () => screenCurrent));
+    await drainMicrotasks(20);
+    if (transition === 'close') screenCurrent = false;
+    else if (transition === 'logout') await h.auth().logout();
+    else await h.auth().login({});
+    h.render(); late.resolve(jsonResponse(200, { avatar })); await outcome.promise; h.render();
+    assert.equal(h.auth().user?.avatar ?? null, null);
+    if (transition === 'logout') assert.equal(h.auth().status, 'unauthenticated');
+    if (transition === 'account') assert.equal(h.auth().user.id, 'user-b');
+  }
+});
 
 function createClient(fetchImpl, storage, onSessionCleared) {
   return new ApiClient({

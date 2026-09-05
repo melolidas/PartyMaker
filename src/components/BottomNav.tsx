@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
-import { AccessibilityInfo, Animated, Image, Platform, Pressable, StyleSheet, View } from 'react-native';
+import { AccessibilityInfo, Animated, Platform, Pressable, StyleSheet, View } from 'react-native';
 import { Feather, Ionicons } from '@expo/vector-icons';
-import { photos } from '../assets';
+import { useAuthenticatedAuth } from '../auth/AuthProvider';
+import { AvatarImage } from '../features/profile/AvatarImage';
 import { useI18n } from '../i18n/LocalizationProvider';
 import { TranslationKey } from '../i18n/translations';
 import { useNavPulse } from '../navigation/useNavPulse';
@@ -183,7 +184,7 @@ function NavButton({
           <Ionicons name={selected ? 'notifications' : 'notifications-outline'} size={26} color={iconColor} />
         ) : item.route === 'profile' ? (
           <View style={[styles.avatarFrame, selected && styles.avatarFrameSelected]}>
-            <Image source={photos.party} style={[styles.avatar, !selected && styles.avatarMuted]} />
+            <View style={!selected && styles.avatarMuted}><ProfileNavAvatar /></View>
           </View>
         ) : (
           <Feather name={item.icon} size={create ? 30 : 27} color={iconColor} />
@@ -191,6 +192,11 @@ function NavButton({
       </View>
     </Pressable>
   );
+}
+
+function ProfileNavAvatar() {
+  const { user } = useAuthenticatedAuth();
+  return <AvatarImage avatar={user.avatar} size={28} />;
 }
 
 const styles = StyleSheet.create({
@@ -271,11 +277,6 @@ const styles = StyleSheet.create({
         elevation: 3,
       },
     }),
-  },
-  avatar: {
-    width: '100%',
-    height: '100%',
-    borderRadius: 14,
   },
   avatarMuted: {
     opacity: 0.7,

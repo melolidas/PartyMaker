@@ -1,21 +1,21 @@
 import { useEffect, useState } from 'react';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import Slider from '@react-native-community/slider';
 import { LinearGradient } from 'expo-linear-gradient';
-import { AccessibilityInfo, Image, Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
+import { AccessibilityInfo, ActivityIndicator, Alert, Image, Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { Feather } from '@expo/vector-icons';
+import { getRequestErrorTranslationKey } from '../api/errorMessages';
 import { photos } from '../assets';
+import { useAuthenticatedAuth } from '../auth/AuthProvider';
 import { IconButton } from '../components/Primitives';
 import { Screen } from '../components/Screen';
 import { ExtroversionGauge } from '../features/profile/ExtroversionGauge';
 import {
-  DEFAULT_EXTROVERSION_LEVEL,
-  EXTROVERSION_STORAGE_KEY,
   getExtroversionBand,
   getExtroversionVisual,
   normalizeExtroversionLevel,
-  parseStoredExtroversionLevel,
 } from '../features/profile/extroversion';
+import { ProfileEditModal } from '../features/profile/ProfileEditModal';
+import { saveExtroversionOptimistically } from '../features/profile/saveExtroversion';
 import { useI18n } from '../i18n/LocalizationProvider';
 import { TranslationKey } from '../i18n/translations';
 import { colors, radius } from '../theme';
@@ -34,11 +34,18 @@ const gallery = [
 
 export function ProfileScreen() {
   const { t } = useI18n();
+  const {
+    user, logout, updateExtroversion,
+    storageRecoveryRequired, recoveringSessionStorage, recoverSessionStorage,
+  } = useAuthenticatedAuth();
   const { width } = useWindowDimensions();
   const gaugeSize = 56;
-  const [level, setLevel] = useState(DEFAULT_EXTROVERSION_LEVEL);
-  const [draftLevel, setDraftLevel] = useState(DEFAULT_EXTROVERSION_LEVEL);
+  const [level, setLevel] = useState(user.extroversionLevel);
+  const [draftLevel, setDraftLevel] = useState(user.extroversionLevel);
   const [editing, setEditing] = useState(false);
+  const [savingLevel, setSavingLevel] = useState(false);
+  const [extroversionErrorKey, setExtroversionErrorKey] = useState<TranslationKey | null>(null);
+  const [editingProfile, setEditingProfile] = useState(false);
   const visibleLevel = editing ? draftLevel : level;
   const visual = getExtroversionVisual(visibleLevel);
   const band = getExtroversionBand(visibleLevel);
@@ -49,56 +56,114 @@ export function ProfileScreen() {
   };
   const bandLabel = t(bandKey[band]);
   const gaugeLabel = `${t('profile.extroversion')}: ${bandLabel}`;
+  const location = [user.city, user.countryCode]
+    .filter((value): value is string => Boolean(value))
+    .join(', ');
 
   useEffect(() => {
-    let mounted = true;
-    AsyncStorage.getItem(EXTROVERSION_STORAGE_KEY)
-      .then((storedLevel) => {
-        if (!mounted) return;
-        const savedLevel = parseStoredExtroversionLevel(storedLevel);
-        setLevel(savedLevel);
-        setDraftLevel(savedLevel);
-      })
-      .catch(() => {});
-    return () => { mounted = false; };
-  }, []);
+    if (editing || savingLevel) return;
+    setLevel(user.extroversionLevel);
+    setDraftLevel(user.extroversionLevel);
+  }, [editing, savingLevel, user.extroversionLevel]);
 
   const openEditor = () => {
     setDraftLevel(level);
+    setExtroversionErrorKey(null);
     setEditing(true);
   };
 
   const cancelEditor = () => {
     setDraftLevel(level);
+    setExtroversionErrorKey(null);
     setEditing(false);
   };
 
-  const saveLevel = () => {
+  const saveLevel = async () => {
+    if (savingLevel) return;
+    const previousLevel = level;
     const nextLevel = normalizeExtroversionLevel(draftLevel);
-    setLevel(nextLevel);
-    setDraftLevel(nextLevel);
-    setEditing(false);
-    void AsyncStorage.setItem(EXTROVERSION_STORAGE_KEY, String(nextLevel)).catch(() => {});
-    AccessibilityInfo.announceForAccessibility(t('profile.saved'));
+    setSavingLevel(true);
+    setExtroversionErrorKey(null);
+    try {
+      const savedLevel = await saveExtroversionOptimistically({
+        currentLevel: previousLevel,
+        nextLevel,
+        setLevel,
+        persist: async (value) => (
+          await updateExtroversion(value)
+        ).extroversionLevel,
+      });
+      setDraftLevel(savedLevel);
+      setEditing(false);
+      AccessibilityInfo.announceForAccessibility(t('profile.saved'));
+    } catch (error: unknown) {
+      setDraftLevel(previousLevel);
+      setExtroversionErrorKey(getRequestErrorTranslationKey(error));
+    } finally {
+      setSavingLevel(false);
+    }
   };
+
+  async function handleLogout() {
+    try {
+      await logout();
+    } catch (error: unknown) {
+      Alert.alert(
+        t('profile.logout'),
+        t(getRequestErrorTranslationKey(error)),
+        [
+          { text: t('common.cancel'), style: 'cancel' },
+          { text: t('auth.recoverStorage'), onPress: () => void handleStorageRecovery() },
+        ],
+      );
+    }
+  }
+
+  async function handleStorageRecovery() {
+    try {
+      await recoverSessionStorage();
+    } catch (error: unknown) {
+      Alert.alert(t('auth.recoverStorage'), t(getRequestErrorTranslationKey(error)), [
+        { text: t('common.cancel'), style: 'cancel' },
+        { text: t('auth.recoverStorage'), onPress: () => void handleStorageRecovery() },
+      ]);
+    }
+  }
 
   return (
-    <Screen contentContainerStyle={styles.content}>
+    <>
+      <Screen contentContainerStyle={styles.content}>
       <View style={styles.topBar}>
-        <View />
+        <Pressable
+          accessibilityRole="button"
+          disabled={recoveringSessionStorage}
+          accessibilityState={{ disabled: recoveringSessionStorage, busy: recoveringSessionStorage }}
+          onPress={() => void (storageRecoveryRequired ? handleStorageRecovery() : handleLogout())}
+          style={({ pressed }) => [styles.logoutButton, pressed && styles.pressed]}
+        >
+          <Feather name="log-out" size={14} color={colors.muted} />
+          <Text style={styles.logoutText}>{t(recoveringSessionStorage
+            ? 'auth.recoveringStorage' : storageRecoveryRequired
+              ? 'auth.recoverStorage' : 'profile.logout')}</Text>
+        </Pressable>
         <IconButton name="settings" accessibilityLabel={t('a11y.settings')} />
       </View>
 
       <View style={styles.profileHeader}>
         <View style={styles.avatarWrap}>
           <Image source={photos.party} style={styles.avatar} />
-          <Pressable style={styles.editButton} accessibilityRole="button" accessibilityLabel={t('a11y.editProfile')}>
+          <Pressable
+            style={styles.editButton}
+            accessibilityRole="button"
+            accessibilityLabel={t('a11y.editProfile')}
+            onPress={() => setEditingProfile(true)}
+          >
             <Feather name="edit-2" size={13} color={colors.text} />
           </Pressable>
         </View>
         <View style={styles.identity}>
-          <Text numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.75} style={[styles.name, width < 360 && styles.nameCompact]}>{t('demo.profileName')}</Text>
-          <Text numberOfLines={2} style={styles.location}>{t('demo.profileLocation')}</Text>
+          <Text numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.75} style={[styles.name, width < 360 && styles.nameCompact]}>{user.displayName}</Text>
+          <Text numberOfLines={2} style={styles.location}>{location || `@${user.handle}`}</Text>
         </View>
         <View style={styles.extroversionSummary}>
           <ExtroversionGauge
@@ -113,13 +178,16 @@ export function ProfileScreen() {
               accessibilityRole="button"
               accessibilityLabel={t(editing ? 'profile.cancelExtroversion' : 'profile.editExtroversion')}
               onPress={editing ? cancelEditor : openEditor}
-              style={({ pressed }) => [styles.editExtroversionButton, pressed && styles.pressed]}
+              disabled={savingLevel}
+              style={({ pressed }) => [styles.editExtroversionButton, pressed && styles.pressed, savingLevel && styles.disabled]}
             >
               <Text style={styles.editExtroversionText}>{t(editing ? 'profile.cancelExtroversion' : 'profile.editExtroversion')}</Text>
             </Pressable>
           </View>
         </View>
       </View>
+
+      {user.bio ? <Text style={styles.bio}>{user.bio}</Text> : null}
 
       {editing ? (
         <View testID="extroversion-editor" style={styles.extroversionEditor}>
@@ -147,6 +215,7 @@ export function ProfileScreen() {
               step={0.5}
               value={draftLevel}
               onValueChange={(value) => setDraftLevel(normalizeExtroversionLevel(value))}
+              disabled={savingLevel}
               minimumTrackTintColor="transparent"
               maximumTrackTintColor="transparent"
               thumbTintColor={visual.color}
@@ -168,13 +237,18 @@ export function ProfileScreen() {
           </View>
 
           <View style={styles.editorActions}>
-            <Pressable accessibilityRole="button" onPress={cancelEditor} style={({ pressed }) => [styles.cancelButton, pressed && styles.pressed]}>
+            <Pressable accessibilityRole="button" disabled={savingLevel} onPress={cancelEditor} style={({ pressed }) => [styles.cancelButton, pressed && styles.pressed, savingLevel && styles.disabled]}>
               <Text style={styles.cancelText}>{t('profile.cancelExtroversion')}</Text>
             </Pressable>
-            <Pressable testID="save-extroversion" accessibilityRole="button" onPress={saveLevel} style={({ pressed }) => [styles.saveButton, { backgroundColor: visual.color }, pressed && styles.pressed]}>
-              <Text style={styles.saveText}>{t('profile.saveExtroversion')}</Text>
+            <Pressable testID="save-extroversion" accessibilityRole="button" disabled={savingLevel} onPress={() => void saveLevel()} style={({ pressed }) => [styles.saveButton, { backgroundColor: visual.color }, pressed && styles.pressed, savingLevel && styles.disabled]}>
+              {savingLevel ? <ActivityIndicator color={colors.white} /> : <Text style={styles.saveText}>{t('profile.saveExtroversion')}</Text>}
             </Pressable>
           </View>
+          {extroversionErrorKey ? (
+            <Text accessibilityLiveRegion="polite" style={styles.errorText}>
+              {t(extroversionErrorKey)}
+            </Text>
+          ) : null}
         </View>
       ) : null}
 
@@ -200,7 +274,13 @@ export function ProfileScreen() {
           </View>
         ))}
       </View>
-    </Screen>
+      </Screen>
+      <ProfileEditModal
+        visible={editingProfile}
+        profile={user}
+        onClose={() => setEditingProfile(false)}
+      />
+    </>
   );
 }
 
@@ -222,6 +302,18 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+  },
+  logoutButton: {
+    minHeight: 36,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
+    paddingHorizontal: 7,
+  },
+  logoutText: {
+    color: colors.muted,
+    fontSize: 12,
+    fontWeight: '600',
   },
   profileHeader: {
     flexDirection: 'row',
@@ -271,6 +363,13 @@ const styles = StyleSheet.create({
     color: colors.muted,
     fontSize: 12,
     lineHeight: 17,
+  },
+  bio: {
+    color: colors.muted,
+    fontSize: 12,
+    lineHeight: 18,
+    marginHorizontal: 6,
+    marginTop: 12,
   },
   extroversionSummary: {
     width: 72,
@@ -362,6 +461,12 @@ const styles = StyleSheet.create({
     gap: 10,
     marginTop: 16,
   },
+  errorText: {
+    color: '#FFB2AD',
+    fontSize: 12,
+    lineHeight: 17,
+    marginTop: 12,
+  },
   cancelButton: {
     flex: 0.82,
     height: 44,
@@ -390,6 +495,9 @@ const styles = StyleSheet.create({
   },
   pressed: {
     opacity: 0.7,
+  },
+  disabled: {
+    opacity: 0.58,
   },
   stats: {
     flexDirection: 'row',

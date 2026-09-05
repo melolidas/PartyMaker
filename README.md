@@ -6,10 +6,74 @@ Dark social meetup app concept built with Expo, React Native and TypeScript.
 
 ```bash
 npm install
+npm run typecheck
+npm test
 npm start
 ```
 
 Scan the QR code with Expo Go or press `a` to open an Android emulator.
+
+## Auth/Profile backend integration
+
+Start the local NestJS backend separately using [the backend setup instructions](backend/README.md). Set `EXPO_PUBLIC_API_BASE_URL` in the shell or in your local `.env` (copy `.env.example` only if `.env` does not already exist). The value is public Expo configuration, must be an absolute HTTP(S) URL, and must end in `/api/v1`. Never put `JWT_ACCESS_SECRET`, `DATABASE_URL`, passwords, or other backend secrets in the Expo environment.
+
+Choose the URL for the device running Expo:
+
+- Web or an iOS simulator on the same computer: `http://localhost:3000/api/v1`.
+- Android emulator: usually `http://10.0.2.2:3000/api/v1`.
+- Physical iOS or Android device: use the development computer's reachable LAN address, for example `http://192.168.1.25:3000/api/v1`. The phone and computer must be on the same network, and the backend port must be reachable through the local firewall.
+
+The frontend now uses these backend endpoints through one typed API client:
+
+- `POST /auth/register`
+- `POST /auth/login`
+- `POST /auth/refresh`
+- `POST /auth/logout`
+- `GET /users/me`
+- `PATCH /users/me`
+- `PUT /users/me/extroversion`
+
+The access token exists only in application memory. On iOS and Android, the refresh token is stored with Expo SecureStore. On web, the refresh token is intentionally kept in memory and is never written to `localStorage`, so a browser-page refresh requires signing in again.
+
+At startup, the app rotates a stored refresh token and then loads `/users/me`. Protected requests receive the in-memory access token. One `401 INVALID_ACCESS_TOKEN` can trigger one shared refresh operation and one request retry. A failed refresh attempts local invalidation; a storage failure is reported rather than presented as a successful session clear. Logout performs durable local invalidation first and completes without waiting for the backend; server revocation is best-effort using the current access token or an already-running refresh operation.
+
+Refresh persistence uses a write-ahead protocol: an acknowledged `pending` operation record precedes the token envelope, and an operation-specific `committed` result follows the completed token write. Reads require matching operation ids, a committed result, no operation tombstone, and an unchanged revocation barrier. Logout changes that independent barrier; credential writers never remove it. Quarantine also writes an append-only tombstone for the exact operation, which a late writer cannot undo. Unknown records and old unversioned tokens are not restored (existing installations must sign in again).
+
+**Confirmed logout vs. storage error:** durable clear requires an acknowledged revocation barrier, even when deleting the token succeeds. A fresh storage wrapper cannot know whether another writer is still pending, and deletion alone cannot revoke a late token write. When `logout()` returns `SESSION_STORAGE_ERROR`, logout is **not confirmed**: no successful session-cleared callback is emitted, and the current shared client context stays fenced against restore, refresh, and protected requests. The same error from recovery means readiness is unconfirmed; it does not undo an earlier confirmed logout.
+
+**Logout confirmation is not recovery readiness.** A successful logout confirms revocation of the old credentials; it does not prove that a foreign writer has finished or that a new session can be stored. Recovery has a separate `ready` result and always performs the storage adapter's read-only `assertReadyForNewSession` check, including with a fresh raw adapter/wrapper and no local quarantine. A missing/unknown terminal result, malformed record, or changed operation head fails that check. Logout never waits for this readiness read.
+
+Once unresolved/unknown storage state is detected, a shared in-memory readiness fence prevents subsequent login/register network requests, restore, and refresh. Confirmed logout does not reset that fence: its callback reports that storage recovery is still required, and the login screen keeps the error and disabled sign-in action. Only an explicit recovery with confirmed readiness clears it. A fresh wrapper never deletes pending evidence or invents an `aborted` result; the owning runtime must safely reconcile its old operation. After that proof is available, retry recovery succeeds and the user may explicitly sign in.
+
+Storage mutations have a five-second deadline. A timeout returns `SESSION_STORAGE_ERROR` and quarantines the shared session immediately, without awaiting further marker writes or cleanup. Login, restore, and protected requests fail locally while quarantined. Reconciliation waits in the background for **all** original mutation and quarantine I/O to settle, confirms a durable revocation barrier, and records `aborted` before permitting another explicit login.
+
+If reconciliation temporarily fails, use **Retry recovery / Повторить восстановление** on the login/register screen. The same action is available from the profile after a logout storage error. It goes through AuthProvider → ApiClient → SessionCoordinator, coalesces repeated requests (including clients sharing storage), and never starts competing cleanup. Known unresolved quarantined I/O produces an error immediately; each reconciliation/readiness observation has a five-second deadline. Timeout does not cancel cleanup, release quarantine, or clear the readiness fence. Readiness checks use the read lane, not the mutation lane: a stalled check cannot hold up durable clear or a later retry, and its late result cannot release a fence or change a newer session. The action remains retryable, shows an error if readiness is unconfirmed, and enables an explicit sign-in only after recovery succeeds; it never signs in automatically.
+
+**Restart limitation:** a timeout is an in-memory safety boundary, not proof of durable invalidation. Pending/unknown persistent records are not restored, and a new runtime never clears them merely because its WeakMap is empty. However, if a delayed `committed` write physically completes while revocation/tombstone writes are unavailable, a new runtime can observe matching committed credentials. Without confirmed durable cleanup (or confirmed server revocation), absence of session restoration after restart cannot be guaranteed. The regression suite explicitly covers this limit. If the process dies with an unresolved pending writer and no terminal proof, recovery cannot safely unlock it automatically. No extra markers are added to claim a stronger guarantee.
+
+Profile name, bio, city, country code, and extroversion level are now backed by `/users/me`. Avatar, gallery, stats, tabs, and their images remain demo UI. Existing Lobby, Chat, Moments, Activity, Media, and Create Lobby data and behavior remain mocked.
+
+### Run Auth/Profile in Expo Web
+
+Use the PostgreSQL already configured in `backend/.env`, or follow the backend README's Docker Compose setup and initial migrations. In one PowerShell terminal, from the repository root:
+
+```powershell
+Set-Location backend
+$env:CORS_ALLOWED_ORIGINS = 'http://localhost:8081'
+npm run build
+npm run start:prod
+```
+
+In another terminal, from the repository root:
+
+```powershell
+$env:EXPO_PUBLIC_API_BASE_URL = 'http://localhost:3000/api/v1'
+npm run web -- --port 8081 --host localhost
+```
+
+Open `http://localhost:8081`. These process-scoped settings do not overwrite existing `.env` files. Register a test user, open Profile, edit the name/extroversion, then sign out and back in to verify persistence. Reloading the web page deliberately returns to sign-in because web refresh tokens are memory-only.
+
+Backend CORS defaults to no cross-origin permission. `CORS_ALLOWED_ORIGINS` accepts explicit comma-separated serialized HTTP(S) origins, without a trailing slash, credentials, path, query, fragment, wildcard or `null`. Use lower-case scheme/host and omit default ports. The browser's scheme, host and port must match exactly: `http://localhost:8081` does not allow `http://127.0.0.1:8081` or a different port. If Expo's address changes, update the allowlist and restart the API. Bearer Authorization and JSON preflight are enabled for allowed origins; cookie credentials are not. Native clients do not need an Origin header. CORS does not replace endpoint authorization or protect the API from non-browser callers.
 
 ## Included screens
 
@@ -54,7 +118,7 @@ Chats are grouped below two label-free 16px status markers without divider lines
 
 Conversation pages include the lobby photo, participant count, meeting details, participant message bubbles and a multiline composer. Sample messages are localized in Russian and English and vary by lobby category; archived cinema and hike chats use distinct historical conversations. Explicit sample/local-message labels and a demo note keep these fixtures separate from user-authored text. The inbox snippets remain static demo previews.
 
-The composer sends only to in-memory mock state: whitespace-only messages are ignored, outer whitespace is trimmed, and input is limited to 2,000 characters. Each lobby id owns its own draft and locally sent messages, including separate current and archived lobby instances. `MockChatProvider` is mounted above the app screens, so drafts and sent messages survive closing/reopening chats and switching tabs during the same app session. They are not stored on disk and reset on a full app reload. User-authored messages stay as typed when the interface language changes. There is no backend, real message delivery, recipient response or notification.
+The composer sends only to in-memory mock state: whitespace-only messages are ignored, outer whitespace is trimmed, and input is limited to 2,000 characters. Each lobby id owns its own draft and locally sent messages, including separate current and archived lobby instances. `MockChatProvider` is mounted above the app screens, so drafts and sent messages survive closing/reopening chats and switching tabs during the same app session. They are not stored on disk and reset on a full app reload. User-authored messages stay as typed when the interface language changes. There is no Chat backend integration, real message delivery, recipient response or notification.
 
 ### Back navigation and native gestures
 

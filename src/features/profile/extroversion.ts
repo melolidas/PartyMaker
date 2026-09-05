@@ -1,7 +1,6 @@
 export const MIN_EXTROVERSION_LEVEL = 1;
 export const MAX_EXTROVERSION_LEVEL = 10;
 export const DEFAULT_EXTROVERSION_LEVEL = 5.5;
-export const EXTROVERSION_STORAGE_KEY = '@partymaker/extroversion-level';
 
 const LEVEL_COLORS = [
   '#47C7FF',
@@ -22,11 +21,6 @@ export function normalizeExtroversionLevel(value: number) {
   if (!Number.isFinite(value)) return DEFAULT_EXTROVERSION_LEVEL;
   const halfStep = Math.round(value * 2) / 2;
   return Math.min(MAX_EXTROVERSION_LEVEL, Math.max(MIN_EXTROVERSION_LEVEL, halfStep));
-}
-
-export function parseStoredExtroversionLevel(value: string | null) {
-  if (value === null || value.trim() === '') return DEFAULT_EXTROVERSION_LEVEL;
-  return normalizeExtroversionLevel(Number(value));
 }
 
 export function getExtroversionBand(level: number): ExtroversionBand {

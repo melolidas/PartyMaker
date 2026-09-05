@@ -6,7 +6,6 @@ const {
   getExtroversionBand,
   getExtroversionVisual,
   normalizeExtroversionLevel,
-  parseStoredExtroversionLevel,
 } = require('../.expo/profile-tests/features/profile/extroversion.js');
 
 test('normalizes an extroversion level to half steps from 1 to 10', () => {
@@ -15,14 +14,6 @@ test('normalizes an extroversion level to half steps from 1 to 10', () => {
   assert.equal(normalizeExtroversionLevel(5.4), 5.5);
   assert.equal(normalizeExtroversionLevel(99), 10);
   assert.equal(normalizeExtroversionLevel(Number.NaN), DEFAULT_EXTROVERSION_LEVEL);
-});
-
-test('parses a persisted preference safely', () => {
-  assert.equal(parseStoredExtroversionLevel(null), DEFAULT_EXTROVERSION_LEVEL);
-  assert.equal(parseStoredExtroversionLevel(''), DEFAULT_EXTROVERSION_LEVEL);
-  assert.equal(parseStoredExtroversionLevel('8'), 8);
-  assert.equal(parseStoredExtroversionLevel('5.5'), 5.5);
-  assert.equal(parseStoredExtroversionLevel('broken'), DEFAULT_EXTROVERSION_LEVEL);
 });
 
 test('maps the scale from a blue left position to a red right position', () => {

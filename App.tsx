@@ -1,12 +1,14 @@
 import { useCallback, useMemo, useState } from 'react';
 import { Platform, StyleSheet, View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import { AuthProvider, useAuth } from './src/auth/AuthProvider';
 import { BottomNav } from './src/components/BottomNav';
 import { LocalizationProvider } from './src/i18n/LocalizationProvider';
 import { HomeExperienceProvider } from './src/features/home/HomeExperienceProvider';
 import { MockChatProvider } from './src/features/chats/MockChatProvider';
 import { NavScrollContext } from './src/navigation/NavScrollContext';
 import { ActivityScreen } from './src/screens/ActivityScreen';
+import { AuthLoadingScreen, AuthScreen } from './src/screens/AuthScreen';
 import { CreateLobbyScreen } from './src/screens/CreateLobbyScreen';
 import { HomeScreen } from './src/screens/HomeScreen';
 import { MomentsScreen } from './src/screens/MomentsScreen';
@@ -18,13 +20,26 @@ export default function App() {
   return (
     <GestureHandlerRootView style={styles.screen}>
       <LocalizationProvider>
-        <HomeExperienceProvider>
-          <MockChatProvider>
-            <PartyMaker />
-          </MockChatProvider>
-        </HomeExperienceProvider>
+        <AuthProvider>
+          <AppGate />
+        </AuthProvider>
       </LocalizationProvider>
     </GestureHandlerRootView>
+  );
+}
+
+function AppGate() {
+  const { status } = useAuth();
+
+  if (status === 'restoring') return <AuthLoadingScreen />;
+  if (status === 'unauthenticated') return <AuthScreen />;
+
+  return (
+    <HomeExperienceProvider>
+      <MockChatProvider>
+        <PartyMaker />
+      </MockChatProvider>
+    </HomeExperienceProvider>
   );
 }
 

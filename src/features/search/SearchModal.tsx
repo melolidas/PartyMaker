@@ -1,17 +1,18 @@
 import { useCallback, useRef, useState } from 'react';
-import { Keyboard, Modal, StyleSheet } from 'react-native';
+import { Keyboard, Modal, StyleSheet, View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { useI18n } from '../../i18n/LocalizationProvider';
 import { NavScrollContext } from '../../navigation/NavScrollContext';
 import { SearchScreen } from '../../screens/SearchScreen';
 import { SwipeBackPage } from '../chats/SwipeBackPage';
-import { LiveLobbyDetails } from '../home/LiveLobbyDetails';
+import { CancelledLobbyNotice, LiveLobbyDetails } from '../home/LiveLobbyDetails';
 
 const ignoreNavScroll = () => {};
 
 export function SearchModal({ onClose }: { onClose: () => void }) {
   const { t } = useI18n();
   const [selectedLobby, setSelectedLobby] = useState<string | null>(null);
+  const [cancelled, setCancelled] = useState(false);
   const requestBack = useRef(onClose);
   const registerBack = useCallback((close: () => void) => { requestBack.current = close; }, []);
   const openLobby = useCallback((lobby: string) => {
@@ -40,7 +41,8 @@ export function SearchModal({ onClose }: { onClose: () => void }) {
               <SearchScreen active={selectedLobby === null} onClose={close} onSelectLobby={openLobby} scrollGesture={scrollGesture} />
             )}
           </SwipeBackPage>
-          {selectedLobby ? <LiveLobbyDetails id={selectedLobby} onClose={() => setSelectedLobby(null)} /> : null}
+          {cancelled && !selectedLobby ? <View style={styles.notice}><CancelledLobbyNotice onDismiss={() => setCancelled(false)} /></View> : null}
+          {selectedLobby ? <LiveLobbyDetails id={selectedLobby} onClose={() => setSelectedLobby(null)} onCancelled={() => setCancelled(true)} /> : null}
         </NavScrollContext.Provider>
       </GestureHandlerRootView>
     </Modal>
@@ -48,5 +50,6 @@ export function SearchModal({ onClose }: { onClose: () => void }) {
 }
 
 const styles = StyleSheet.create({
+  notice: { position: 'absolute', left: 18, right: 18, bottom: 24 },
   overlay: { flex: 1, overflow: 'hidden' },
 });

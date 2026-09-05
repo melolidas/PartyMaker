@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { getLobbyInvalidation } from '../../api/lobbyInvalidation';
 import { emptyLobbyDetails, LobbyDetailsStore, membershipAction } from './lobbyDetails';
@@ -10,7 +10,7 @@ import { LiveLobbyMetadata, LobbyCategoryPlaceholder } from './LiveLobbyCard';
 import { useHomeClock } from './HomeExperienceProvider';
 import { LiveLobbyChatScreen } from '../chats/LiveLobbyChatScreen';
 
-export function LiveLobbyDetails({ id, onClose }: { id: string; onClose: () => void }) {
+export function LiveLobbyDetails({ id, onClose, onCancelled }: { id: string; onClose: () => void; onCancelled?: () => void }) {
   const { lobbyApi, user, storageRecoveryRequired } = useAuth();
   const { t } = useI18n();
   const now = useHomeClock();
@@ -19,13 +19,20 @@ export function LiveLobbyDetails({ id, onClose }: { id: string; onClose: () => v
   const chatOpen = !!account && chat?.account === account && chat.id === id;
   const store = useMemo(() => new LobbyDetailsStore(lobbyApi), [lobbyApi]);
   const snapshot = useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot);
+  const notified = useRef(false);
   useEffect(() => {
     const unsubscribe = getLobbyInvalidation(lobbyApi).subscribe(() => { void store.reload(); });
     store.setContext(account, id);
+    notified.current = false;
     setChat(null);
     return () => { unsubscribe(); store.setContext(null, id); };
   }, [store, lobbyApi, account, id]);
   const current = snapshot.account === account && snapshot.id === id ? snapshot : emptyLobbyDetails(account, id);
+  useEffect(() => {
+    if (account && current.cancelled && !notified.current) {
+      notified.current = true; onCancelled?.(); onClose();
+    }
+  }, [account, current.cancelled, onCancelled, onClose]);
   const lobby = current.lobby;
   const intent = lobby ? membershipAction(lobby, now) : null;
   const busy = current.loading || current.mutating;
@@ -34,16 +41,29 @@ export function LiveLobbyDetails({ id, onClose }: { id: string; onClose: () => v
     <View style={styles.overlay}>
       <View style={[styles.sheet, chatOpen && styles.chatSheet]}>
         {chatOpen ? <LiveLobbyChatScreen lobbyId={id} title={chat.title} onBack={backToDetails} onAccessLost={() => void store.reload()} /> : <>
-        <View style={styles.header}><Text accessibilityRole="header" style={styles.title}>{lobby?.title ?? t('lobbies.details')}</Text>
+        <View style={styles.header}><Text accessibilityRole="header" style={styles.title}>{current.cancelTarget?.title ?? lobby?.title ?? t('lobbies.details')}</Text>
           <Pressable accessibilityRole="button" accessibilityLabel={t('common.close')} onPress={onClose}><Text style={styles.close}>{t('common.close')}</Text></Pressable>
         </View>
         <ScrollView contentContainerStyle={styles.content}>
+          {current.cancelTarget ? <View testID="cancel-confirmation" style={styles.content}>
+            <Text style={styles.description}>{t('cancel.warning')}</Text>
+            {current.cancelError ? <Text testID="cancel-error" accessibilityLiveRegion="polite" style={styles.muted}>{t(current.cancelError)}</Text> : null}
+            {current.cancelPhase === 'confirm' && lobby && Date.parse(lobby.startsAt) <= now ? <Text testID="cancel-started" style={styles.muted}>{t('cancel.started')}</Text> : null}
+            {current.cancelPhase === 'confirm' ? <Pressable testID="cancel-decline" accessibilityRole="button" disabled={current.mutating} onPress={store.declineCancel} style={styles.action}>
+              <Text style={styles.close}>{t('cancel.decline')}</Text>
+            </Pressable> : null}
+            <Pressable testID="cancel-confirm" accessibilityRole="button"
+              disabled={current.mutating || (current.cancelPhase === 'confirm' && (!lobby || Date.parse(lobby.startsAt) <= now))}
+              onPress={() => void store.confirmCancel()} style={styles.action}>
+              {current.mutating ? <ActivityIndicator testID="cancel-busy" color={colors.text} /> : <Text style={styles.close}>{t(current.cancelPhase === 'retry' ? 'cancel.retry' : 'cancel.action')}</Text>}
+            </Pressable>
+          </View> : null}
           {current.loading && !lobby ? <ActivityIndicator testID="lobby-details-loading" color={colors.text} /> : null}
           {current.error ? <View testID="lobby-details-error" style={styles.content}>
             <Text style={styles.muted}>{t(current.error instanceof ApiClientError && current.error.code === 'LOBBY_NOT_FOUND' ? 'lobbies.notFound' : 'lobbies.loadError')}</Text>
             <Pressable accessibilityRole="button" disabled={busy} onPress={() => void store.reload()}><Text style={styles.close}>{t('auth.retry')}</Text></Pressable>
           </View> : null}
-          {lobby ? <>
+          {lobby && !current.cancelTarget && !current.cancelled ? <>
             <LobbyCategoryPlaceholder category={lobby.category} />
             <LiveLobbyMetadata lobby={lobby} />
             <Text testID="live-lobby-description" style={styles.description}>{lobby.description}</Text>
@@ -57,6 +77,13 @@ export function LiveLobbyDetails({ id, onClose }: { id: string; onClose: () => v
             <Pressable testID="membership-refresh" disabled={busy} accessibilityRole="button" onPress={() => void store.reload()}>
               <Text style={styles.close}>{t(current.loading ? 'membership.checking' : 'lobbies.reload')}</Text>
             </Pressable>
+            {lobby.isOrganizer ? <>
+              <Pressable testID="cancel-open" accessibilityRole="button" disabled={busy || !!current.error || Date.parse(lobby.startsAt) <= now}
+                onPress={store.requestCancel} style={[styles.action, Date.parse(lobby.startsAt) <= now && styles.dimmed]}>
+                <Text style={styles.close}>{t('cancel.action')}</Text>
+              </Pressable>
+              {Date.parse(lobby.startsAt) <= now ? <Text testID="cancel-started" style={styles.muted}>{t('cancel.started')}</Text> : null}
+            </> : null}
             <Pressable testID="live-chat-open" disabled={busy || !!current.error || !account || lobby.membershipStatus !== 'JOINED'} accessibilityRole="button"
               accessibilityState={{ disabled: busy || !!current.error || !account || lobby.membershipStatus !== 'JOINED' }} style={styles.action}
               onPress={account && !busy && !current.error && lobby.membershipStatus === 'JOINED' ? () => setChat({ account, id, title: lobby.title }) : undefined}>
@@ -70,7 +97,17 @@ export function LiveLobbyDetails({ id, onClose }: { id: string; onClose: () => v
   </Modal>;
 }
 
+/** Non-modal receipt on the source screen, shown only after the cancel POST confirms. */
+export function CancelledLobbyNotice({ onDismiss }: { onDismiss: () => void }) {
+  const { t } = useI18n();
+  return <View testID="cancel-success" accessibilityLiveRegion="polite" style={styles.notice}>
+    <Text style={styles.description}>{t('cancel.success')}</Text>
+    <Pressable accessibilityRole="button" onPress={onDismiss}><Text style={styles.close}>{t('common.close')}</Text></Pressable>
+  </View>;
+}
+
 const styles = StyleSheet.create({
+  notice: { padding: 16, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, borderRadius: radius.medium },
   overlay: { flex: 1, justifyContent: 'center', padding: 20, backgroundColor: 'rgba(0,0,0,0.75)' },
   sheet: { maxHeight: '85%', width: '100%', maxWidth: 520, alignSelf: 'center', backgroundColor: colors.surface, borderColor: colors.border, borderWidth: 1, borderRadius: radius.large, padding: 20 },
   chatSheet: { height: '85%' },

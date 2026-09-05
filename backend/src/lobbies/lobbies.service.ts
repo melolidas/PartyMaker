@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, Inject, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { isUUID } from 'class-validator';
 
@@ -7,6 +7,7 @@ import type { ListLobbiesQueryDto } from './dto/list-lobbies-query.dto';
 import type { CreateLobbyRequestDto } from './dto/create-lobby-request.dto';
 import type { LobbyPageResponseDto, LobbyResponseDto } from './dto/lobby-response.dto';
 import { parseLobbyInstant } from './lobby-instant';
+import type { CancelLobbyResponseDto } from './dto/cancel-lobby-response.dto';
 
 const lobbySelect = (userId: string) => ({
   id: true, organizerId: true, title: true, description: true, category: true, startsAt: true,
@@ -161,6 +162,28 @@ export class LobbiesService {
       }
       const updated = await tx.lobby.findUniqueOrThrow({ where: { id }, select: lobbySelect(userId) });
       return toLobbyResponse(updated, userId);
+    }, { isolationLevel: 'ReadCommitted' });
+  }
+
+  async cancel(id: string, userId: string): Promise<CancelLobbyResponseDto> {
+    return this.prisma.$transaction(async tx => {
+      // Same parent lock as join/leave/send. Re-read after any preceding commit.
+      await tx.$queryRaw`SELECT id FROM "Lobby" WHERE id = ${id}::uuid FOR UPDATE`;
+      const lobby = await tx.lobby.findUnique({ where: { id }, select: { status: true, organizerId: true, startsAt: true } });
+      if (!lobby || (lobby.status !== 'PUBLISHED' && lobby.status !== 'CANCELLED')
+        || (lobby.status === 'CANCELLED' && lobby.organizerId !== userId)) {
+        throw new NotFoundException({ code: 'LOBBY_NOT_FOUND', message: 'Lobby not found' });
+      }
+      if (lobby.organizerId !== userId) {
+        throw new ForbiddenException({ code: 'LOBBY_ORGANIZER_REQUIRED', message: 'Only the organizer can cancel this lobby' });
+      }
+      // A replay is a true no-op, including after startsAt; never rewrite updatedAt/history.
+      if (lobby.status === 'CANCELLED') return { id, status: 'CANCELLED' };
+      if (lobby.startsAt.getTime() <= Date.now()) {
+        throw new ConflictException({ code: 'LOBBY_STARTED', message: 'A started lobby cannot be cancelled' });
+      }
+      await tx.lobby.update({ where: { id }, data: { status: 'CANCELLED' } });
+      return { id, status: 'CANCELLED' };
     }, { isolationLevel: 'ReadCommitted' });
   }
 

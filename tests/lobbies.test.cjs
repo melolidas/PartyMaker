@@ -124,6 +124,141 @@ function texts(tree) {
 const byId = (tree, id) => nodes(tree).find(n => n.props?.testID === id);
 const button = (tree, label) => nodes(tree).find(n => n.props?.accessibilityRole === 'button' && texts(n) === label);
 
+const cancelledReceipt = () => ({ id: lobby.id, status: 'CANCELLED' });
+function cancelHost(api = {}, extra = {}) {
+  let now = Date.now(), closes = 0, notices = 0;
+  const auth = { user: { id: 'A' }, lobbyApi: { getLobby: async () => ({ ...lobby, isOrganizer: true, isJoined: true, membershipStatus: 'JOINED' }), ...api } };
+  const h = host(auth), { LiveLobbyDetails } = h.load('src/features/home/LiveLobbyDetails.tsx', { './HomeExperienceProvider': { useHomeClock: () => now }, ...extra });
+  const props = { id: lobby.id, onClose() { closes++; }, onCancelled() { notices++; } };
+  return { h, auth, props, render: () => h.render(LiveLobbyDetails, props), clock: n => { now = n; }, result: () => ({ closes, notices }) };
+}
+
+test('cancel belongs only to organizer, confirms in the same Modal and declining never sends POST', async () => {
+  let calls = 0;
+  const c = cancelHost({ cancelLobby: async () => { calls++; return cancelledReceipt(); } });
+  c.render(); await flush(); byId(c.render(), 'cancel-open').props.onPress();
+  assert.equal(nodes(c.render()).filter(n => n.type === 'Modal').length, 1);
+  assert.match(texts(c.render()), /demo.pizza/); assert.match(texts(c.render()), /Восстановление.*не предусмотрено/);
+  assert.equal(calls, 0); byId(c.render(), 'cancel-decline').props.onPress();
+  assert.equal(byId(c.render(), 'cancel-confirmation'), undefined); assert.equal(calls, 0);
+  c.clock(Date.parse(lobby.startsAt)); assert.equal(byId(c.render(), 'cancel-open').props.disabled, true); assert.ok(byId(c.render(), 'cancel-started'));
+  c.h.unmount();
+  const other = cancelHost({ getLobby: async () => ({ ...lobby, isJoined: true, membershipStatus: 'JOINED' }) });
+  other.render(); await flush(); assert.equal(byId(other.render(), 'cancel-open'), undefined); other.h.unmount();
+});
+
+test('cancel double presses lock synchronously, block old membership handler and notify/close only on exact receipt', async () => {
+  const pending = deferred(); let calls = 0, joins = 0;
+  const c = cancelHost({ cancelLobby: () => { calls++; return pending.promise; }, joinLobby: async () => { joins++; return lobby; } });
+  c.render(); await flush(); const oldMembership = byId(c.render(), 'membership-action').props.onPress;
+  byId(c.render(), 'cancel-open').props.onPress(); const confirm = byId(c.render(), 'cancel-confirm').props.onPress;
+  confirm(); confirm(); oldMembership(); assert.equal(calls, 1); assert.equal(joins, 0); assert.ok(byId(c.render(), 'cancel-busy'));
+  assert.deepEqual(c.result(), { closes: 0, notices: 0 }); pending.resolve(cancelledReceipt()); await flush(); c.render(); c.render();
+  assert.deepEqual(c.result(), { closes: 1, notices: 1 }); assert.equal(byId(c.render(), 'cancel-open'), undefined); c.h.unmount();
+});
+
+test('lost cancel response plus GET404 is not success; same-target retry remains available after startsAt and confirms POST200', async () => {
+  for (const failure of ['network', '5xx', 'wrong-id', 'wrong-status']) {
+    const c = cancelHost(); let calls = 0;
+    c.auth.lobbyApi.cancelLobby = async id => {
+      assert.equal(id, lobby.id); calls++;
+      if (calls > 1) return cancelledReceipt();
+      if (failure === 'wrong-id') return { id: 'other', status: 'CANCELLED' };
+      if (failure === 'wrong-status') return { id, status: 'PUBLISHED' };
+      throw new ApiClientError({ statusCode: failure === '5xx' ? 503 : 0, code: failure === '5xx' ? 'HTTP_503' : 'NETWORK_ERROR', message: 'lost' });
+    };
+    c.render(); await flush(); byId(c.render(), 'cancel-open').props.onPress();
+    c.auth.lobbyApi.getLobby = async () => { throw new ApiClientError({ statusCode: 404, code: 'LOBBY_NOT_FOUND', message: 'missing' }); };
+    byId(c.render(), 'cancel-confirm').props.onPress(); await flush();
+    assert.ok(byId(c.render(), 'lobby-details-error')); assert.ok(byId(c.render(), 'cancel-error'));
+    assert.equal(byId(c.render(), 'live-lobby-description'), undefined); assert.deepEqual(c.result(), { closes: 0, notices: 0 });
+    c.clock(Date.parse(lobby.startsAt) + 1);
+    const retry = byId(c.render(), 'cancel-confirm'); assert.equal(retry.props.disabled, false); assert.equal(texts(retry), 'Повторить отмену');
+    retry.props.onPress(); await flush(); c.render(); assert.deepEqual(c.result(), { closes: 1, notices: 1 }); assert.equal(calls, 2); c.h.unmount();
+  }
+});
+
+test('pending cancel survives stalled verification and old GETs; retry does not wait for GET or restore its DTO', async () => {
+  const late = deferred(); let calls = 0;
+  const api = { getLobby: async () => ({ ...lobby, isOrganizer: true }), cancelLobby: async () => { if (++calls === 1) throw Error('lost'); return cancelledReceipt(); } };
+  const store = new LobbyDetailsStore(api); store.setContext('A', lobby.id); await flush(); store.requestCancel();
+  api.getLobby = () => late.promise; await store.confirmCancel(); assert.equal(store.getSnapshot().loading, true);
+  await store.confirmCancel(); assert.equal(store.getSnapshot().cancelled, true);
+  late.resolve(lobby); await flush(); assert.equal(store.getSnapshot().lobby, null); assert.equal(store.getSnapshot().cancelled, true);
+});
+
+test('late cancel success/rejection after account/logout/lobby/unmount never closes or notifies a newer context', async () => {
+  for (const transition of ['account', 'logout', 'lobby', 'unmount']) for (const fail of [false, true]) {
+    const late = deferred(); const c = cancelHost({ cancelLobby: () => late.promise });
+    c.render(); await flush(); byId(c.render(), 'cancel-open').props.onPress(); byId(c.render(), 'cancel-confirm').props.onPress();
+    if (transition === 'account') c.auth.user = { id: 'B' };
+    if (transition === 'logout') c.auth.user = null;
+    if (transition === 'lobby') c.props.id = 'new-lobby';
+    if (transition === 'unmount') c.h.unmount(); else assert.equal(byId(c.render(), 'cancel-confirmation'), undefined);
+    if (fail) late.reject(Error('old')); else late.resolve(cancelledReceipt()); await flush();
+    if (transition !== 'unmount') c.render(); assert.deepEqual(c.result(), { closes: 0, notices: 0 }); c.h.unmount();
+  }
+});
+
+test('cancel error codes have RU/EN reasons and crossing startsAt disables an unsubmitted confirmation', async () => {
+  for (const [code, key] of [['LOBBY_STARTED','cancel.started'], ['LOBBY_ORGANIZER_REQUIRED','cancel.organizerRequired'], ['LOBBY_NOT_FOUND','cancel.notFound']]) {
+    const c = cancelHost({ cancelLobby: async () => { throw new ApiClientError({ statusCode: 409, code, message: code }); } });
+    c.render(); await flush(); byId(c.render(), 'cancel-open').props.onPress(); byId(c.render(), 'cancel-confirm').props.onPress(); await flush();
+    assert.equal(texts(byId(c.render(), 'cancel-error')), createTranslator('ru')(key)); assert.notEqual(createTranslator('en')(key), createTranslator('ru')(key)); c.h.unmount();
+  }
+  const c = cancelHost(); c.render(); await flush(); byId(c.render(), 'cancel-open').props.onPress(); c.clock(Date.parse(lobby.startsAt));
+  assert.equal(byId(c.render(), 'cancel-confirm').props.disabled, true); assert.ok(byId(c.render(), 'cancel-started')); c.h.unmount();
+});
+
+test('cancel transport is bounded, validates receipt and invalidates only current session on success/uncertainty', async () => {
+  for (const mode of ['success', 'auth-retry', 'network', '5xx', 'invalid', 'wrong-id']) {
+    let calls = 0, rotations = 0, invalidations = 0;
+    const client = creationClient(async (url, options) => {
+      if (url.endsWith('/auth/login')) return authReply(1);
+      if (url.endsWith('/auth/refresh')) { rotations++; return authReply(2); }
+      calls++; assert.ok(url.endsWith(`/lobbies/${lobby.id}/cancel`)); assert.equal(options.method, 'POST'); assert.equal(options.body, undefined);
+      if (mode === 'auth-retry' && calls === 1) return new Response(JSON.stringify({ error: { code: 'INVALID_ACCESS_TOKEN', message: 'expired' } }), { status: 401 });
+      if (mode === 'network') throw Error('offline');
+      if (mode === '5xx') return new Response('{}', { status: 503 });
+      return new Response(JSON.stringify(mode === 'invalid' ? {} : mode === 'wrong-id' ? { id: 'other', status: 'CANCELLED' } : cancelledReceipt()));
+    });
+    await client.login({ email: 'a@example.test', password: 'test-only' }); getLobbyInvalidation(client).subscribe(() => { invalidations++; });
+    if (mode === 'success' || mode === 'auth-retry') assert.deepEqual(await client.cancelLobby(lobby.id), cancelledReceipt());
+    else await assert.rejects(client.cancelLobby(lobby.id));
+    assert.equal(calls, mode === 'auth-retry' ? 2 : 1); assert.equal(rotations, mode === 'auth-retry' ? 1 : 0); assert.equal(invalidations, 1);
+  }
+  const late = deferred(); let logins = 0, invalidations = 0;
+  const client = creationClient(async url => url.endsWith('/auth/login') ? authReply(++logins) : late.promise);
+  await client.login({ email: 'a@example.test', password: 'test-only' }); getLobbyInvalidation(client).subscribe(() => { invalidations++; });
+  const call = client.cancelLobby(lobby.id); const rejected = assert.rejects(call, e => e.code === 'INVALID_REFRESH_TOKEN');
+  await client.login({ email: 'b@example.test', password: 'test-only' }); late.resolve(new Response(JSON.stringify(cancelledReceipt()))); await rejected;
+  assert.equal(invalidations, 0);
+});
+
+test('cancel invalidation updates all independent feeds/search/inbox/chat and rejects every old page', async () => {
+  let cancelled = false; const late = deferred();
+  const client = creationClient(async (url, options) => {
+    if (url.endsWith('/auth/login')) return authReply(1);
+    if (options.method === 'POST') { cancelled = true; return new Response(JSON.stringify(cancelledReceipt())); }
+    if (new URL(url).searchParams.has('after') || new URL(url).searchParams.has('before')) return late.promise;
+    if (url.includes('/messages')) return new Response(JSON.stringify(cancelled ? { error: { code: 'LOBBY_NOT_FOUND', message: 'unavailable' } } : page([message()], 'old')), { status: cancelled ? 404 : 200 });
+    return new Response(JSON.stringify(page(cancelled ? [] : url.includes('/chats') ? [chatRow(lobby.id)] : [lobby], cancelled ? null : 'old')));
+  });
+  await client.login({ email: 'a@example.test', password: 'test-only' });
+  const feeds = ['all','mine','mine'].map(scope => new LobbyFeedStore(after => client.listLobbies(after, scope)));
+  const search = new searchLogic.LobbySearchStore((q, after) => client.listLobbies(after, 'all', q));
+  const inbox = new inboxLogic.LiveChatInboxStore(after => client.listChats(after));
+  const chat = new LiveLobbyChatStore(client, () => 'send-id');
+  const stores = [...feeds, search, inbox]; const channel = getLobbyInvalidation(client);
+  for (const store of stores) { store.setAccount('A'); channel.subscribe(store === inbox ? store.invalidate : store.reload); }
+  chat.setContext('A', lobby.id); channel.subscribe(chat.invalidate); await flush();
+  const oldPages = [...stores.map(store => store.loadMore()), chat.loadOlder()];
+  await client.cancelLobby(lobby.id); await flush();
+  late.resolve(new Response(JSON.stringify(page([lobby])))); await Promise.all(oldPages); await flush();
+  for (const store of stores) assert.deepEqual(store.getSnapshot().items, []);
+  assert.deepEqual(chat.getSnapshot().items, []); assert.equal(chat.getSnapshot().blocked, true);
+});
+
 test('actual feed renders loading, empty, error and retry with no demo fallback', async () => {
   let pending = deferred();
   const auth = { user: { id: 'A' }, status: 'authenticated', lobbyApi: { listLobbies: () => pending.promise } };

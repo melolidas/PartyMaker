@@ -3,7 +3,7 @@ import { BackHandler, Pressable, StyleSheet, Text, View } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { Screen } from '../components/Screen';
 import { LiveLobbyFeed } from '../features/home/LiveLobbyFeed';
-import { LiveLobbyDetails } from '../features/home/LiveLobbyDetails';
+import { CancelledLobbyNotice, LiveLobbyDetails } from '../features/home/LiveLobbyDetails';
 import { useI18n } from '../i18n/LocalizationProvider';
 import { colors } from '../theme';
 
@@ -11,6 +11,7 @@ import { colors } from '../theme';
 export function PersonalLobbiesScreen({ onClose, onCreate }: { onClose: () => void; onCreate?: () => void }) {
   const { t } = useI18n();
   const [selectedLobbyId, setSelectedLobbyId] = useState<string | null>(null);
+  const [cancelled, setCancelled] = useState(false);
   useEffect(() => {
     const subscription = BackHandler.addEventListener('hardwareBackPress', () => { onClose(); return true; });
     return () => subscription.remove();
@@ -23,9 +24,10 @@ export function PersonalLobbiesScreen({ onClose, onCreate }: { onClose: () => vo
         </Pressable>
         <Text accessibilityRole="header" style={styles.title}>{t('common.viewAll')}</Text>
       </View>
+      {cancelled ? <CancelledLobbyNotice onDismiss={() => setCancelled(false)} /> : null}
       <LiveLobbyFeed scope="mine" onSelect={setSelectedLobbyId} onCreate={onCreate} />
     </Screen>
-    {selectedLobbyId ? <LiveLobbyDetails key={selectedLobbyId} id={selectedLobbyId} onClose={() => setSelectedLobbyId(null)} /> : null}
+    {selectedLobbyId ? <LiveLobbyDetails key={selectedLobbyId} id={selectedLobbyId} onClose={() => setSelectedLobbyId(null)} onCancelled={() => setCancelled(true)} /> : null}
   </>;
 }
 

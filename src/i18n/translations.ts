@@ -1,6 +1,15 @@
 import { AppLanguage } from './language';
 
 const en = {
+  'cancel.action': 'Cancel lobby',
+  'cancel.warning': 'This meeting will disappear from available lobbies and chats. Restoring it is not supported in this version.',
+  'cancel.decline': 'Keep lobby',
+  'cancel.retry': 'Retry cancellation',
+  'cancel.unconfirmed': 'Cancellation is not confirmed. The server may have saved it. Retry this cancellation to confirm; a missing lobby is not proof of success.',
+  'cancel.notFound': 'The server could not confirm cancellation of this lobby. You can retry the same action.',
+  'cancel.started': 'The meeting has started. A published lobby can no longer be cancelled.',
+  'cancel.organizerRequired': 'Only the organizer can cancel this lobby.',
+  'cancel.success': 'Lobby cancelled. It is no longer available in lobbies or chats.',
   'inbox.empty': 'No available chats. Create or join a lobby to start a conversation.',
   'inbox.noMessages': 'No messages yet',
   'inbox.error': 'Could not load chats. Check your connection and retry.',
@@ -44,7 +53,7 @@ const en = {
   'membership.join': 'Join lobby',
   'membership.leave': 'Leave lobby',
   'membership.organizer': 'You are the organizer',
-  'membership.organizerReason': 'The organizer cannot leave yet. Organizer transfer and cancellation are not available.',
+  'membership.organizerReason': 'The organizer cannot leave. Organizer transfer is not available; a future lobby can be cancelled separately.',
   'membership.unavailable': 'Membership unavailable',
   'membership.removed': 'You were removed from this lobby and cannot rejoin yourself.',
   'membership.started': 'The event has started. Membership can no longer change.',
@@ -305,6 +314,15 @@ export type TranslationKey = keyof typeof en;
 export type Translator = (key: TranslationKey) => string;
 
 const ru = {
+  'cancel.action': 'Отменить лобби',
+  'cancel.warning': 'Встреча исчезнет из доступных лобби и чатов. Восстановление в текущей версии не предусмотрено.',
+  'cancel.decline': 'Не отменять',
+  'cancel.retry': 'Повторить отмену',
+  'cancel.unconfirmed': 'Отмена не подтверждена. Сервер мог её сохранить. Повторите эту отмену для подтверждения; отсутствие лобби не доказывает успех.',
+  'cancel.notFound': 'Сервер не подтвердил отмену этого лобби. Можно повторить то же действие.',
+  'cancel.started': 'Встреча уже началась. Опубликованное лобби больше нельзя отменить.',
+  'cancel.organizerRequired': 'Отменить лобби может только организатор.',
+  'cancel.success': 'Лобби отменено. Оно больше не доступно в списках лобби и чатов.',
   'inbox.empty': 'Доступных чатов пока нет. Создайте лобби или вступите, чтобы начать общение.',
   'inbox.noMessages': 'Сообщений пока нет',
   'inbox.error': 'Не удалось загрузить чаты. Проверьте соединение и повторите.',
@@ -348,7 +366,7 @@ const ru = {
   'membership.join': 'Вступить в лобби',
   'membership.leave': 'Выйти из лобби',
   'membership.organizer': 'Вы — организатор',
-  'membership.organizerReason': 'Организатор пока не может выйти. Передача роли и отмена события недоступны.',
+  'membership.organizerReason': 'Организатор не может выйти. Передача роли недоступна; будущее лобби можно отменить отдельным действием.',
   'membership.unavailable': 'Изменение участия недоступно',
   'membership.removed': 'Вас исключили из этого лобби. Самостоятельно вступить повторно нельзя.',
   'membership.started': 'Событие уже началось. Изменить участие больше нельзя.',

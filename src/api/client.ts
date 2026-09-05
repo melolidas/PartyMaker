@@ -1,6 +1,6 @@
 import { getApiBaseUrl } from './config';
 import { getLobbyInvalidation } from './lobbyInvalidation';
-import type { CreateLobbyInput, Lobby, LobbyPage, LobbyScope, LobbyMessage, LobbyMessagePage, SendLobbyMessageInput, ChatPage } from './lobbyTypes';
+import type { CreateLobbyInput, Lobby, LobbyPage, LobbyScope, LobbyMessage, LobbyMessagePage, SendLobbyMessageInput, ChatPage, CancelLobbyResult } from './lobbyTypes';
 import {
   ApiClientError,
   createApiConfigurationError,
@@ -198,6 +198,20 @@ export class ApiClient {
 
   joinLobby(id: string): Promise<Lobby> { return this.changeLobbyMembership(id, 'join'); }
   leaveLobby(id: string): Promise<Lobby> { return this.changeLobbyMembership(id, 'leave'); }
+
+  async cancelLobby(id: string): Promise<CancelLobbyResult> {
+    const session = this.sessionCoordinator.capturePublishedSession();
+    try {
+      const response = await this.protectedRequestForSession<CancelLobbyResult>(session, `/lobbies/${encodeURIComponent(id)}/cancel`, { method: 'POST' });
+      if (!response || response.id !== id || response.status !== 'CANCELLED') {
+        throw new ApiClientError({ statusCode: 0, code: 'INVALID_API_RESPONSE', message: 'Unconfirmed lobby cancellation' });
+      }
+      return response;
+    } finally {
+      // Includes uncertain outcomes, not an assertion of success. Never target the next session.
+      if (this.sessionCoordinator.isSessionCurrent(session)) getLobbyInvalidation(this).invalidate();
+    }
+  }
 
   private async changeLobbyMembership(id: string, action: 'join' | 'leave'): Promise<Lobby> {
     const session = this.sessionCoordinator.capturePublishedSession();

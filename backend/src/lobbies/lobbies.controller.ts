@@ -1,5 +1,5 @@
 import { BadRequestException, Body, Controller, Get, HttpCode, Inject, Param, ParseUUIDPipe, Post, Query, UseGuards } from '@nestjs/common';
-import { ApiBadRequestResponse, ApiBearerAuth, ApiBody, ApiConflictResponse, ApiCreatedResponse, ApiExtraModels, ApiNotFoundResponse, ApiOkResponse, ApiOperation, ApiTags, ApiUnauthorizedResponse } from '@nestjs/swagger';
+import { ApiBadRequestResponse, ApiBearerAuth, ApiBody, ApiConflictResponse, ApiCreatedResponse, ApiExtraModels, ApiForbiddenResponse, ApiNotFoundResponse, ApiOkResponse, ApiOperation, ApiTags, ApiUnauthorizedResponse } from '@nestjs/swagger';
 
 import { CurrentAuth } from '../auth/decorators/current-auth.decorator';
 import { AccessTokenGuard } from '../auth/guards/access-token.guard';
@@ -9,6 +9,7 @@ import { ListLobbiesQueryDto } from './dto/list-lobbies-query.dto';
 import { CreateLobbyRequestDto } from './dto/create-lobby-request.dto';
 import { LobbyPageResponseDto, LobbyResponseDto } from './dto/lobby-response.dto';
 import { LobbiesService } from './lobbies.service';
+import { CancelLobbyResponseDto } from './dto/cancel-lobby-response.dto';
 
 @ApiTags('lobbies')
 @ApiBearerAuth('access-token')
@@ -45,8 +46,20 @@ export class LobbiesController {
 
   private assertEmptyBody(body: unknown): void {
     if (body !== undefined && (body === null || typeof body !== 'object' || Array.isArray(body) || Object.keys(body).length > 0)) {
-      throw new BadRequestException({ code: 'VALIDATION_FAILED', message: 'Membership actions do not accept body or query fields' });
+      throw new BadRequestException({ code: 'VALIDATION_FAILED', message: 'This action does not accept body or query fields' });
     }
+  }
+
+  @Post(':id/cancel')
+  @HttpCode(200)
+  @ApiOperation({ summary: 'Cancel a future published lobby as its organizer', description: 'No body or query fields. Organizer comes from Lobby.organizerId, not membership. CANCELLED replay by the organizer is a no-op even after startsAt; timestamps and all membership/message history are preserved. Cancelled lobbies disappear from catalogs/inbox and chat becomes unavailable. No restore or physical deletion.' })
+  @ApiOkResponse({ type: CancelLobbyResponseDto })
+  @ApiForbiddenResponse({ type: ApiErrorResponseDto, description: 'LOBBY_ORGANIZER_REQUIRED: non-organizer of a PUBLISHED lobby' })
+  @ApiNotFoundResponse({ type: ApiErrorResponseDto, description: 'LOBBY_NOT_FOUND: missing/DRAFT/COMPLETED, or CANCELLED for a non-organizer' })
+  @ApiConflictResponse({ type: ApiErrorResponseDto, description: 'LOBBY_STARTED: PUBLISHED event has started. CANCELLED replay is checked first.' })
+  cancel(@Param('id', new ParseUUIDPipe()) id: string, @CurrentAuth() auth: AuthContext, @Body() body: unknown, @Query() query: Record<string, unknown>): Promise<CancelLobbyResponseDto> {
+    this.assertEmptyBody(body); this.assertEmptyBody(query);
+    return this.lobbies.cancel(id, auth.userId);
   }
 
   @Post()

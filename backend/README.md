@@ -182,11 +182,29 @@ Both return **200** with the same current safe Lobby DTO. No body/query fields a
 - 409 LOBBY_FULL: no free place for a real join (organizer occupies a place).
 - 409 LOBBY_STARTED: a real membership transition was requested after the event started.
 - 409 LOBBY_MEMBERSHIP_REMOVED: self-changing a REMOVED membership, including the leave → join bypass.
-- 409 LOBBY_ORGANIZER_CANNOT_LEAVE: leaving as organizer; transfer/cancellation are not implemented.
+- 409 LOBBY_ORGANIZER_CANNOT_LEAVE: leaving as organizer; transfer is not implemented. Cancelling a future event is a separate organizer action.
 
 **Concurrency:** both actions run in a PostgreSQL ReadCommitted transaction and first acquire a parameterized `SELECT id FROM "Lobby" WHERE id = ... FOR UPDATE` on the same parent row. Membership, startsAt and JOINED count are read/checked **after** obtaining the lock; writes and the response projection occur before releasing it at commit. Competing actions serialize per lobby across backend processes, not through an in-memory mutex. The existing (lobbyId, userId) primary key remains. A second join sees the first commit: either the same user's no-op or LOBBY_FULL, never an extra place. All future membership/capacity writers must honor this parent-row protocol; arbitrary SQL/imports bypassing it are outside the API guarantee. No Prisma schema/migration changes.
 
 Concurrency tests hold the actual PostgreSQL row lock and observe both HTTP requests waiting in pg_stat_activity before release. They cover the last place, duplicate user joins and overlapping join/leave; no sequential simulation. See [PostgreSQL row locks](https://www.postgresql.org/docs/current/explicit-locking.html#LOCKING-ROWS).
+
+### POST /api/v1/lobbies/:id/cancel
+
+Bearer is required. No body or query fields are accepted (400 VALIDATION_FAILED); malformed UUIDs return 400. Success is **200 `{ id, status: "CANCELLED" }`**, not a Lobby details DTO.
+
+- Only Lobby.organizerId determines ownership, not membership/role/isJoined.
+- Future PUBLISHED → CANCELLED. Started PUBLISHED → **409 LOBBY_STARTED**.
+- Non-organizer of PUBLISHED → **403 LOBBY_ORGANIZER_REQUIRED**.
+- Missing, DRAFT or COMPLETED → **404 LOBBY_NOT_FOUND**. CANCELLED is also hidden with 404 from non-organizers.
+- Organizer replay of CANCELLED → the same 200, **before checking startsAt**. No repeated write, updatedAt change or history change, even after the scheduled start.
+
+The ReadCommitted transaction takes the same parameterized Lobby `FOR UPDATE` row lock as join/leave/send, then rechecks existence, status, owner and time. First cancellation writes only status and the normal updatedAt. Membership rows/statuses/timestamps, messages and related records are neither deleted nor rewritten. A preceding join/leave/send retains its committed effect; if cancellation commits first, those later actions return LOBBY_NOT_FOUND. No in-memory lock, background job, new table, schema or migration is involved.
+
+CANCELLED events disappear from all/mine/search/inbox; details and messages return 404, including for the organizer. Owner access to the idempotent cancel endpoint does not grant archive/history access. Reads already running before cancellation may finish against their earlier snapshot.
+
+The client must validate the cancel POST receipt, not infer success from GET 404 or an absent card. An uncertain network/5xx/invalid response retains an in-memory target for an explicit same-id retry, even after startsAt; no automatic network retry. A successful receipt closes details and invalidates all available lobby/chat views for the current session. Restore/physical deletion, archive endpoints, notifications and organizer transfer remain unavailable.
+
+`npm test` includes isolated PostgreSQL cancellation fixtures: ownership/status/time/field validation, history preservation, post-start replay without timestamp changes, visibility across all lists, and genuine overlapping cancel/cancel, cancel/join and cancel/send transactions in both applicable orders. The concurrency helper observes actual lock waits before releasing a blocker; requests are not a sequential imitation. Root README describes the two-user browser smoke and unconfirmed response/retry check.
 
 ### POST /api/v1/lobbies
 
@@ -203,7 +221,7 @@ Returns **201** with the same safe Lobby DTO. Required JSON fields:
 
 The authenticated user supplies `organizerId` implicitly through the guard. The server sets `status=PUBLISHED` and `minParticipants=2`. Unknown/internal fields (`organizerId`, `status`, `members`, `id`, media, etc.) return `400 VALIDATION_FAILED`, as do invalid inputs. A nested Prisma create atomically inserts the lobby and exactly one organizer membership (`role=ORGANIZER`, `status=JOINED`); a child-insert failure rolls back the lobby. The response immediately reports `joinedCount=1`, `isJoined=true` and the organizer's real group score.
 
-POST has no idempotency key or automatic network retry. A lost response can mean the record was already saved; inspect the catalog or personal list before explicitly resubmitting. The frontend only retries after a definite guard rejection (`401 INVALID_ACCESS_TOKEN`) using its existing refresh mechanism. Home and View all now show real upcoming participation. Completed-event history, editing/deleting, invitations, notifications, organizer transfer, cancellation and Media remain out of scope.
+Creation POST has no idempotency key or automatic network retry. A lost response can mean the record was already saved; inspect the catalog or personal list before explicitly resubmitting. The frontend only retries after a definite guard rejection (`401 INVALID_ACCESS_TOKEN`) using its existing refresh mechanism. Home and View all now show real upcoming participation. Organizer cancellation is documented above; completed-event history, editing/deleting, invitations, notifications, organizer transfer and Media remain out of scope.
 
 `npm test` includes database-backed Lobby tests using isolated random-UUID fixtures, cleaned up by their own ids; it never resets or reseeds the database. The seed updates fixed records, so do not rerun it just to refresh Home dates in an existing database. Existing past seed events correctly produce an empty upcoming catalog. For a manual smoke test, create isolated future PUBLISHED fixtures with known ids and clean up only those fixtures; see the root README for list/details/empty/error-retry steps.
 

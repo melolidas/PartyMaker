@@ -1,6 +1,6 @@
 import { getApiBaseUrl } from './config';
 import { getLobbyInvalidation } from './lobbyInvalidation';
-import type { CreateLobbyInput, Lobby, LobbyPage, LobbyScope } from './lobbyTypes';
+import type { CreateLobbyInput, Lobby, LobbyPage, LobbyScope, LobbyMessage, LobbyMessagePage, SendLobbyMessageInput } from './lobbyTypes';
 import {
   ApiClientError,
   createApiConfigurationError,
@@ -179,6 +179,16 @@ export class ApiClient {
 
   getLobby(id: string): Promise<Lobby> {
     return this.protectedRequest<Lobby>(`/lobbies/${encodeURIComponent(id)}`, { method: 'GET' });
+  }
+
+  listLobbyMessages(id: string, before?: string): Promise<LobbyMessagePage> {
+    const query = before === undefined ? '' : `&before=${encodeURIComponent(before)}`;
+    return this.protectedRequest<LobbyMessagePage>(`/lobbies/${encodeURIComponent(id)}/messages?limit=30${query}`, { method: 'GET' });
+  }
+
+  sendLobbyMessage(id: string, input: SendLobbyMessageInput): Promise<LobbyMessage> {
+    // Only the existing bounded auth rejection retry, never an automatic network retry.
+    return this.protectedRequest<LobbyMessage>(`/lobbies/${encodeURIComponent(id)}/messages`, { method: 'POST', body: input });
   }
 
   joinLobby(id: string): Promise<Lobby> { return this.changeLobbyMembership(id, 'join'); }

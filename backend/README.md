@@ -109,7 +109,7 @@ The shared `configureApp` applies the same policy in tests and production bootst
 
 `npm run test:cors` runs the CORS/configuration checks without PostgreSQL or `.env`. The same tests also run in `npm test`, alongside the database-backed Auth/Profile suite.
 
-On web, refresh tokens remain **memory-only**; reloading the page requires explicit sign-in. There is no cookie or localStorage session persistence. Profile changes and newly created lobbies persist in PostgreSQL. Home and Search load real upcoming lobbies, personal memberships and details with working join/leave. Editing/deleting lobbies, Chat, Moments, Activity/Notifications and Media APIs remain unimplemented; existing demo sections stay separate and labeled.
+On web, refresh tokens remain **memory-only**; reloading the page requires explicit sign-in. There is no cookie or localStorage session persistence. Profile changes, newly created lobbies and text messages persist in PostgreSQL. Home and Search load real upcoming lobbies, personal memberships and details with working join/leave and JOINED-only text chat. Editing/deleting lobbies, the general live chat list, Moments, Activity/Notifications and Media APIs remain unimplemented; existing demo sections stay separate and labeled.
 
 ## Auth and profile API
 
@@ -207,6 +207,20 @@ POST has no idempotency key or automatic network retry. A lost response can mean
 
 `npm test` includes database-backed Lobby tests using isolated random-UUID fixtures, cleaned up by their own ids; it never resets or reseeds the database. The seed updates fixed records, so do not rerun it just to refresh Home dates in an existing database. Existing past seed events correctly produce an empty upcoming catalog. For a manual smoke test, create isolated future PUBLISHED fixtures with known ids and clean up only those fixtures; see the root README for list/details/empty/error-retry steps.
 
+## Lobby text messages (REST, no realtime)
+
+- `GET /api/v1/lobbies/:id/messages?limit=30&before=<opaque-cursor>` returns `{ items, nextCursor }`. Limit is an integer 1–50, default 30. Newest first: createdAt DESC, id DESC. Cursor encodes canonical UTC createdAt (four-digit AD year 0001–9999) and UUID; malformed cursors/queries, arrays, objects and unknown fields return 400 VALIDATION_FAILED. Lobby and deletedAt=null filters apply before pagination. Each GET checks access and reads history in one RepeatableRead transaction. A read begun before leave may finish; separate pages are not a frozen snapshot.
+- `POST /api/v1/lobbies/:id/messages` accepts only `{ clientMessageId: UUID, body: string }`, no query fields. Trimmed body must have 1–2000 Unicode characters and no NUL (PostgreSQL text restriction). Author comes exclusively from Bearer, lobby from path, createdAt from the database clock. Existing LobbyMessage.id stores the client UUID; no new table, schema change or migration.
+- First insert: **201**. Exact UUID + author + lobby + normalized body retry: **200**, same row and original createdAt. Different payload, author, lobby, or a deleted id: **409 MESSAGE_ID_CONFLICT**, without returning another message's content/author. No update on replay. A client must preserve the pair for explicit retry after an uncertain network result, not invent a fresh UUID.
+- Both endpoints require Bearer and a current JOINED membership. Organizer access is through membership, not merely organizerId. Missing or non-PUBLISHED: **404 LOBBY_NOT_FOUND**; outsider/LEFT/REMOVED: **403 LOBBY_CHAT_FORBIDDEN**. A past PUBLISHED event remains chat-accessible. COMPLETED/CANCELLED archives are not supported.
+- Safe DTO only: `id, lobbyId, body, createdAt, author: { id, displayName, handle }`. No full User, email, auth fields, deletedAt/editedAt, internal media keys or fabricated avatars.
+
+POST uses the same Lobby `FOR UPDATE` row lock and ReadCommitted transaction as join/leave. It rechecks status/membership after locking, then inserts with PostgreSQL ON CONFLICT DO NOTHING (Prisma createMany/skipDuplicates), inspects the exact stored row and either returns the replay or raises the generic conflict. This also handles cross-lobby concurrent UUID collisions without an aborted P2002 transaction. If leave commits first, send is forbidden; if send commits first, its message remains saved. All future membership/status writers must follow the same parent-row lock protocol. See [Prisma bulk inserts and skipDuplicates](https://docs.prisma.io/docs/orm/v6/prisma-client/queries/crud).
+
+`npm test` includes real PostgreSQL read/send, privacy, validation, deleted-history, tuple-pagination and idempotency tests. Concurrent send/replay and send/leave tests observe both HTTP transactions waiting on actual PostgreSQL locks, not sequential mocks. Fixtures are isolated and deleted only by their known ids.
+
+Expo displays chronological history, older-page loading, manual latest Refresh, confirmed sends and explicit same-id retries. No polling, general live inbox, notifications, attachments, reactions, read receipts, typing, message edit/delete, member list or WebSocket. The general Chats UI remains explicitly demo-only.
+
 ## Error response
 
 Every API error is normalized to this shape:
@@ -224,4 +238,4 @@ Every API error is normalized to this shape:
 }
 ```
 
-Health, Auth, Profile, Lobby creation, catalog/details and join/leave are implemented. Other Lobby mutations, chat, moments, notifications and media APIs remain outside this stage; demo frontend records are kept separate from real lobbies.
+Health, Auth, Profile, Lobby creation, catalog/details, join/leave and per-lobby text messages are implemented. Other Lobby mutations, general live chat list, moments, notifications and media APIs remain outside this stage; demo frontend records are kept separate from real lobbies.

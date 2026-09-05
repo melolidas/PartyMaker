@@ -37,6 +37,8 @@ The frontend now uses these backend endpoints through one typed API client:
 - `POST /lobbies`
 - `POST /lobbies/:id/join`
 - `POST /lobbies/:id/leave`
+- `GET /lobbies/:id/messages?limit=30&before=<opaque-cursor>`
+- `POST /lobbies/:id/messages`
 
 The access token exists only in application memory. On iOS and Android, the refresh token is stored with Expo SecureStore. On web, the refresh token is intentionally kept in memory and is never written to `localStorage`, so a browser-page refresh requires signing in again.
 
@@ -56,7 +58,7 @@ If reconciliation temporarily fails, use **Retry recovery / Повторить �
 
 **Restart limitation:** a timeout is an in-memory safety boundary, not proof of durable invalidation. Pending/unknown persistent records are not restored, and a new runtime never clears them merely because its WeakMap is empty. However, if a delayed `committed` write physically completes while revocation/tombstone writes are unavailable, a new runtime can observe matching committed credentials. Without confirmed durable cleanup (or confirmed server revocation), absence of session restoration after restart cannot be guaranteed. The regression suite explicitly covers this limit. If the process dies with an unresolved pending writer and no terminal proof, recovery cannot safely unlock it automatically. No extra markers are added to claim a stronger guarantee.
 
-Profile name, bio, city, country code, and extroversion level are backed by `/users/me`. Home's upcoming catalog, Your lobbies / View all, Search, lobby details and Create Lobby use PostgreSQL through the same authenticated ApiClient. Avatar, gallery, stats, Chat, Moments and Activity remain explicitly labeled demos. Real joining/leaving now works, including from search results. Chat, invitations, notifications, organizer transfer, cancellation, editing/deleting lobbies and Media are not implemented.
+Profile name, bio, city, country code, and extroversion level are backed by `/users/me`. Home's upcoming catalog, Your lobbies / View all, Search, lobby details, Create Lobby and lobby text chat use PostgreSQL through the same authenticated ApiClient. Avatar, gallery, stats, the general Chats section, Moments and Activity remain explicitly labeled demos. Real joining/leaving works, including from search results. Invitations, notifications, organizer transfer, cancellation, editing/deleting lobbies and Media are not implemented.
 
 ### Run Auth/Profile in Expo Web
 
@@ -85,7 +87,8 @@ Backend CORS defaults to no cross-origin permission. `CORS_ALLOWED_ORIGINS` acce
 - Home with independent real upcoming catalog and personal upcoming lobbies
 - Your lobbies / View all: a paginated real list of the current user's upcoming JOINED memberships
 - Search: real PostgreSQL substring search by title or venue, with paginated results and membership actions
-- Chats with active and archived lobby rows, opened using the paper-plane button on Home
+- Live text chat opened from real lobby details (JOINED only, manual refresh)
+- Demo Chats with active and archived lobby rows, opened using the paper-plane button on Home
 - Mock lobby conversations with sample messages and a working local composer
 - Moments social feed
 - Create Lobby: real form and atomic PostgreSQL creation with organizer membership
@@ -111,7 +114,7 @@ UI translations and localized demo content live in `src/i18n/translations.ts`. F
 
 Titles and descriptions are literal user-authored text, not translation keys. Schedule labels use the event's IANA `timeZone`; countdowns use the absolute ISO `startsAt` and do not restart on rerender. Images are category placeholders until Media is available. Counts include JOINED members only, and a membership badge identifies the current user's JOINED membership. The group gauge averages real JOINED users' extroversion scores, rounds to the nearest 0.5 (ties upward), and is hidden for an empty group. It is a group aggregate, not invented sample data.
 
-Tap a real card to fetch details from `/lobbies/:id` and join/leave as a regular participant before the event starts. The organizer cannot leave. Chat remains explicitly disabled; real ids never enter demo joining or mock conversations. A published past event remains viewable by id, but unpublished/missing details show an unavailable state. Lists/details discard late results after logout, account switch or a newer load. The authenticated app tree and local demo conversations reset on account switch.
+Tap a real card to fetch details from `/lobbies/:id` and join/leave as a regular participant before the event starts. The organizer cannot leave. JOINED participants can open the real text chat; real ids never enter demo joining or mock conversations. A published past event remains viewable by id, but unpublished/missing details show an unavailable state. Lists/details discard late results after logout, account switch or a newer load. The authenticated app tree and local demo conversations reset on account switch.
 
 Cursor pages are not a database snapshot: events may start or be edited between requests; Refresh obtains a fresh catalog. Existing seed events may already be in the past, so an empty catalog can be correct. Do not reseed/reset an existing database to populate Home: use isolated future test lobbies with known ids, and remove only those fixtures afterward.
 
@@ -125,7 +128,7 @@ Mine is not filtered from the first all page: an event far beyond that page stil
 
 Personal cards open the same real details with membership actions, never a mock chat. Group counts and mean extroversion still use **all** JOINED members. Returning from View all reloads Home's lists; returning after successful creation also reloads both scopes and opens the new id even if absent from their first pages. Logout/account switch discards list state and late reload/page results. No demo fallback exists.
 
-Browser regression: create an isolated lobby → Home personal section → View all → details → logout/relogin → verify membership persists. Sign in as a different isolated user: the lobby may appear in all, but not mine without their own JOINED membership. Also test the empty/Create state and Refresh → error → Retry by temporarily stopping only the local API. Use known fixture ids; never reset/reseed or modify pre-existing records. Completed-event history, editing/deleting, real chats and Media remain unavailable.
+Browser regression: create an isolated lobby → Home personal section → View all → details → logout/relogin → verify membership persists. Sign in as a different isolated user: the lobby may appear in all, but not mine without their own JOINED membership. Also test the empty/Create state and Refresh → error → Retry by temporarily stopping only the local API. Use known fixture ids; never reset/reseed or modify pre-existing records. Completed-event history, editing/deleting and Media remain unavailable.
 
 ## Create a real lobby
 
@@ -149,7 +152,7 @@ Open details subscribe to the same app clock as countdowns: join/leave becomes v
 
 Home ↔ View all explicitly expands navCompact on both transitions, including a short destination with no upward scroll possible. The scroll algorithm itself is unchanged.
 
-Browser regression with two isolated users: organizer creates → second user opens the catalog card and joins → Home and View all show their JOINED event → leaving removes it from both mine lists → organizer Refresh shows the updated count. Check the organizer's disabled leave action and the absent real chat action. Only test-created records are cleaned up by known ids.
+Browser regression with two isolated users: organizer creates → second user opens the catalog card and joins → Home and View all show their JOINED event → leaving removes it from both mine lists → organizer Refresh shows the updated count. Check the organizer's disabled leave action and JOINED-only chat access. Only test-created records are cleaned up by known ids.
 
 ## Home demo tools
 
@@ -173,6 +176,20 @@ PostgreSQL must provide its deterministic ICU collation `und-x-icu`; it is expli
 
 Browser smoke: create a known isolated event → find it by title and venue (including different case and literal `%_`) → another user opens details, joins and sees updated search and mine → leave removes it from mine and updates search counters. Test empty search, no matches, clear, and API-offline → Retry. Remove only these fixtures by known ids. Browser verification does not imply a physical-phone test.
 
+## Live lobby text chat
+
+Open **Open lobby chat / Открыть чат лобби** from real details after joining. Organizer access also requires JOINED membership. Chat replaces the content of the same details Modal; Back returns to those details, keeping the underlying search/personal-list context. The general paper-plane Chats entry remains a separate demo.
+
+Messages are stored in the existing PostgreSQL LobbyMessage model; no schema change. GET returns the newest 30 messages (limit 1–50) ordered by createdAt DESC, id DESC, with an opaque `before` cursor. The UI displays them chronologically, supports earlier pages and **manual Refresh**, not realtime or polling. Refresh resets the history cursor to the newest page; confirmed sends in this open chat remain visible even when an older GET snapshot arrives. Pages are deduplicated by server id, not a total message count. More recent messages beyond a full latest page are reached through earlier-page loading.
+
+POST accepts only `{ clientMessageId: UUID, body: string }`. Body is trimmed plain text, 1–2000 Unicode characters; PostgreSQL cannot store NUL. UUIDs come from Expo's existing native/web UUID facility. One logical send keeps one id and normalized body: first save is 201, an identical explicit retry is 200 with the original createdAt, conflicting id/payload/author/lobby is 409 MESSAGE_ID_CONFLICT. There is no automatic network POST retry or simulated delivery; only the existing bounded 401 auth refresh retry. Failed/uncertain sends keep their draft and original pair for **Retry send**. Editing the composer meanwhile prepares a separate draft; a late success does not erase it. **Stop retrying** releases the failed attempt without deleting any message that the server may already have saved. Pending attempts/drafts exist only while that chat is open; reopening loads confirmed server history.
+
+Only current JOINED participants can read/send. Missing/non-PUBLISHED: 404; outsider/LEFT/REMOVED: 403 LOBBY_CHAT_FORBIDDEN. startsAt does not close a PUBLISHED chat. Sending shares join/leave's PostgreSQL parent-row lock and rechecks access after acquiring it. History access and data use one RepeatableRead snapshot; a GET that began before leave may finish. On an observed 403/404 the UI removes history, disables sending and refreshes details access. Logout/account/lobby changes and closing discard late responses. Auth storage is unchanged.
+
+Browser smoke: create an isolated lobby as organizer → join with a second test user → send as organizer → manually refresh as member and reply → reopen both chats to verify persistence → leave as member and verify access is unavailable. Use only known fixture ids for cleanup; never reset or reseed existing data. Physical-phone behavior must be verified separately; automated/native-compatible code is not a phone test.
+
+No general live inbox, attachments, reactions, read receipts, typing, message edit/delete, participant list, push or WebSocket is implemented.
+
 ## Chats (demo)
 
 The white paper-plane button on Home opens a full-screen chat list; the Chats header contains only Back and its title, without a duplicate paper-plane icon. It starts with “Beer tonight” and “CS2 squad”, using demo photos and member counts, independent of real Home memberships. Joining another **demo** lobby adds a mock chat row; event start times do not remove existing rows. Tap any active or archived row to open its mock conversation. Back from a conversation opened this way returns to the list. Home's real “Your lobbies” never opens a mock conversation.
@@ -181,7 +198,7 @@ Chats are grouped below two label-free 16px status markers without divider lines
 
 Conversation pages include the lobby photo, participant count, meeting details, participant message bubbles and a multiline composer. Sample messages are localized in Russian and English and vary by lobby category; archived cinema and hike chats use distinct historical conversations. Explicit sample/local-message labels and a demo note keep these fixtures separate from user-authored text. The inbox snippets remain static demo previews.
 
-The composer sends only to in-memory mock state: whitespace-only messages are ignored, outer whitespace is trimmed, and input is limited to 2,000 characters. Each lobby id owns its own draft and locally sent messages, including separate current and archived lobby instances. `MockChatProvider` is mounted above the app screens, so drafts and sent messages survive closing/reopening chats and switching tabs during the same app session. They are not stored on disk and reset on a full app reload. User-authored messages stay as typed when the interface language changes. There is no Chat backend integration, real message delivery, recipient response or notification.
+This demo composer sends only to in-memory mock state: whitespace-only messages are ignored, outer whitespace is trimmed, and input is limited to 2,000 characters. Each demo lobby id owns its own draft and locally sent messages, including separate current and archived lobby instances. `MockChatProvider` is mounted above the app screens, so drafts and sent messages survive closing/reopening demo chats and switching tabs during the same app session. They are not stored on disk and reset on a full app reload. User-authored messages stay as typed when the interface language changes. This demo path has no backend integration, real delivery, recipient response or notification; real text chat uses LiveLobbyChatScreen separately.
 
 ### Back navigation and native gestures
 

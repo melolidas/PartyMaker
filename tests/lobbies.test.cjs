@@ -14,6 +14,8 @@ const { LobbyDetailsStore, membershipAction } = detailsLogic;
 const searchLogic = require('../.expo/lobby-tests/features/search/lobbySearch.js');
 const createForm = require('../.expo/lobby-tests/features/home/createLobbyForm.js');
 const { CreateLobbyFormStore, validateLobbyForm, bishkekDateTimeToInstant } = createForm;
+const chatLogic = require('../.expo/lobby-tests/features/chats/liveLobbyChat.js');
+const { LiveLobbyChatStore } = chatLogic;
 
 const lobby = {
   id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', title: 'demo.pizza', description: 'My own description <not markup>',
@@ -75,6 +77,9 @@ function host(auth) {
       '../../api/errors': { ApiClientError },
       '../../api/lobbyInvalidation': { getLobbyInvalidation },
       './lobbyDetails': detailsLogic,
+      '../chats/LiveLobbyChatScreen': { LiveLobbyChatScreen: 'LiveLobbyChatScreen' },
+      './liveLobbyChat': chatLogic,
+      'expo-modules-core': { uuid: { v4: () => 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb' } },
       './HomeExperienceProvider': { useHomeClock: () => Date.now() },
       '../navigation/NavScrollContext': { NavScrollContext: { value() {} } },
       './lobbyFeed': { LobbyFeedStore, formatLobbyStartsAt, emptyLobbyFeed: require('../.expo/lobby-tests/features/home/lobbyFeed.js').emptyLobbyFeed },
@@ -206,7 +211,7 @@ test('real strings stay literal, dates use event timezone and countdown takes th
   assert.doesNotMatch(texts(metadata), /км|km/);
 });
 
-test('actual details load by id, preserve user description and offer membership but no chat action', async () => {
+test('actual details load by id, preserve user description and require JOINED for chat', async () => {
   const pending = deferred(); let selected;
   const auth = { user: { id: 'A' }, lobbyApi: { getLobby: id => { selected = id; return pending.promise; } } };
   const h = host(auth); const { LiveLobbyDetails } = h.load('src/features/home/LiveLobbyDetails.tsx');
@@ -217,7 +222,7 @@ test('actual details load by id, preserve user description and offer membership 
   assert.equal(texts(byId(tree, 'live-lobby-description')), lobby.description);
   assert.equal(texts(byId(tree,'membership-action')), 'Вступить в лобби');
   assert.equal(byId(tree,'membership-action').props.disabled, false);
-  for (const label of ['Чат — недоступен']) {
+  for (const label of ['Чат доступен только вступившим участникам']) {
     const action = button(tree, label); assert.equal(action.props.disabled, true); assert.equal(action.props.onPress, undefined);
   }
   h.unmount();
@@ -444,6 +449,199 @@ function creationClient(handler) {
   return new ApiClient({baseUrl:()=> 'http://api.test/api/v1',refreshTokenStorage:{async get(){return token;},async set(v){token=v;},async clear(){token=null;}},fetchImpl:handler});
 }
 const authReply = (n, userId = 'A') => new Response(JSON.stringify({user:{id:userId},accessToken:'access-'+n,refreshToken:'refresh-'+n}));
+
+const message = (id = 'm1', body = 'Real text <b>not HTML</b>', extra = {}) => ({
+  id, lobbyId: lobby.id, body, createdAt: '2026-01-01T12:00:00.000Z', author: { id: 'A', displayName: 'Автор', handle: 'author' }, ...extra,
+});
+const chatError = statusCode => new ApiClientError({ statusCode, code: statusCode === 403 ? 'LOBBY_CHAT_FORBIDDEN' : 'LOBBY_NOT_FOUND', message: 'denied' });
+function chatHost(api) {
+  const auth = { user: { id: 'A' }, lobbyApi: api }, h = host(auth);
+  const { LiveLobbyChatScreen } = h.load('src/features/chats/LiveLobbyChatScreen.tsx');
+  const props = { lobbyId: lobby.id, title: lobby.title, onBack() {}, onAccessLost() {} };
+  return { auth, h, props, render: () => h.render(LiveLobbyChatScreen, props) };
+}
+const history = tree => byId(tree, 'live-chat-history').props.data;
+
+test('actual live chat loading/empty/error/retry and manual refresh contain no mock delivery', async () => {
+  let response = deferred(), calls = 0;
+  const c = chatHost({ listLobbyMessages: () => { calls++; return response.promise; } });
+  assert.ok(byId(c.render(), 'live-chat-loading'));
+  assert.deepEqual(history(c.render()), []);
+  response.reject(new Error('offline')); await flush();
+  assert.ok(byId(c.render(), 'live-chat-error')); assert.deepEqual(history(c.render()), []);
+  response = deferred(); byId(c.render(), 'live-chat-retry').props.onPress();
+  response.resolve(page()); await flush(); assert.ok(byId(c.render(), 'live-chat-empty'));
+  response = deferred(); byId(c.render(), 'live-chat-refresh').props.onPress();
+  response.resolve(page([message()])); await flush();
+  assert.equal(history(c.render()).length, 1); assert.equal(calls, 3);
+  const bubble = byId(c.render(), 'live-chat-history').props.renderItem({ item: message() });
+  assert.equal(texts(byId(bubble, 'live-chat-message-body')), message().body);
+  assert.match(texts(bubble), /Автор\s+· @\s*author/); assert.doesNotMatch(texts(bubble), /delivered|доставлено/i);
+  c.h.unmount();
+});
+test('actual chat paginates before cursor, coalesces clicks and preserves history on page failure', async () => {
+  const calls = []; let pending = deferred();
+  const c = chatHost({ listLobbyMessages: async (id, before) => { calls.push([id, before]); return before ? pending.promise : page([message('m3'),message('m2')], 'older'); } });
+  c.render(); await flush(); assert.deepEqual(history(c.render()).map(m => m.id), ['m2','m3']);
+  const older = () => byId(byId(c.render(), 'live-chat-history').props.ListHeaderComponent, 'live-chat-older');
+  older().props.onPress(); older().props.onPress(); assert.equal(older().props.disabled, true);
+  pending.reject(new Error('offline')); await flush();
+  assert.deepEqual(history(c.render()).map(m => m.id), ['m2','m3']);
+  pending = deferred(); byId(c.render(), 'live-chat-retry').props.onPress();
+  pending.resolve(page([message('m2'),message('m1')])); await flush();
+  assert.deepEqual(history(c.render()).map(m => m.id), ['m1','m2','m3']);
+  assert.deepEqual(calls, [[lobby.id,undefined],[lobby.id,'older'],[lobby.id,'older']]); c.h.unmount();
+});
+test('actual send is single-flight; uncertain retry uses original UUID/body and preserves newer draft', async () => {
+  let pending = deferred(); const calls = [];
+  const c = chatHost({ listLobbyMessages: async () => page(), sendLobbyMessage: async (id, input) => { calls.push({ id, ...input }); return pending.promise; } });
+  c.render(); await flush();
+  byId(c.render(), 'live-chat-draft').props.onChangeText('  First text  ');
+  const send = byId(c.render(), 'live-chat-send').props.onPress; send(); send();
+  assert.equal(calls.length, 1); assert.ok(byId(c.render(), 'live-chat-sending')); assert.deepEqual(history(c.render()), []);
+  pending.reject(new Error('lost response')); await flush();
+  assert.equal(byId(c.render(), 'live-chat-draft').props.value, '  First text  ');
+  assert.ok(byId(c.render(), 'live-chat-send-error'));
+  byId(c.render(), 'live-chat-draft').props.onChangeText('New text typed later');
+  pending = deferred(); const retry = byId(c.render(), 'live-chat-send-retry').props.onPress; retry(); retry();
+  assert.equal(calls.length, 2); assert.deepEqual(calls[0], calls[1]); assert.equal(calls[1].body, 'First text');
+  pending.resolve(message(calls[0].clientMessageId, 'First text')); await flush();
+  assert.equal(history(c.render()).length, 1); assert.equal(byId(c.render(), 'live-chat-draft').props.value, 'New text typed later');
+  assert.equal(byId(c.render(), 'live-chat-send').props.disabled, false); c.h.unmount();
+});
+test('valid send clears only unchanged draft; validation and UUID failure never issue POST', async () => {
+  let calls = 0, ids = 0;
+  const store = new LiveLobbyChatStore({ listLobbyMessages: async () => page(), sendLobbyMessage: async (_id, input) => { calls++; return message(input.clientMessageId, input.body); } }, () => { ids++; return 'uuid'; });
+  store.setContext('A', lobby.id); await flush();
+  for (const body of ['', '  ', 'x'.repeat(2001), 'a\u0000b']) { store.setDraft(body); await store.send(); assert.equal(store.getSnapshot().sendError, 'liveChat.invalidBody'); }
+  assert.equal(calls, 0); assert.equal(ids, 0);
+  assert.equal(chatLogic.validMessageBody('🎉'.repeat(2000)), true);
+  store.setDraft(' valid '); await store.send(); assert.equal(store.getSnapshot().draft, ''); assert.equal(calls, 1);
+  const broken = new LiveLobbyChatStore({ listLobbyMessages: async () => page(), sendLobbyMessage: () => { throw Error('must not send'); } }, () => { throw Error('uuid unavailable'); });
+  broken.setContext('A', lobby.id); await flush(); broken.setDraft('draft'); await broken.send();
+  assert.equal(broken.getSnapshot().sendError, 'liveChat.idError'); assert.equal(broken.getSnapshot().draft, 'draft');
+});
+test('old latest/page GET after confirmed send cannot remove it, and repeated server IDs deduplicate', async () => {
+  for (const older of [false, true]) {
+    const read = deferred(); let initial = true;
+    const store = new LiveLobbyChatStore({
+      listLobbyMessages: async () => { if (initial) { initial = false; return page([message('m1')], 'cursor'); } return read.promise; },
+      sendLobbyMessage: async (_id, input) => message(input.clientMessageId, input.body),
+    }, () => 'm3');
+    store.setContext('A', lobby.id); await flush(); store.setDraft('confirmed');
+    // Start send first, keep its response pending in the microtask queue, then capture an old GET.
+    const sent = store.send(); const reading = older ? store.loadOlder() : store.reload(); await sent;
+    assert.ok(store.getSnapshot().items.some(m => m.id === 'm3'));
+    read.resolve(page([message('m1'), message('m1')])); await reading;
+    assert.deepEqual(store.getSnapshot().items.map(m => m.id), ['m1','m3']);
+  }
+});
+test('late chat GET/page/send cannot change account, lobby, logged-out or unmounted context', async () => {
+  for (const operation of ['read','page','send']) for (const transition of ['account','lobby','logout','unmount']) {
+    const late = deferred(); let calls = 0;
+    const c = chatHost({ listLobbyMessages: async () => {
+      if (++calls === 1) return page([message()], 'older');
+      if (operation !== 'send' && calls === 2) return late.promise;
+      return page();
+    }, sendLobbyMessage: () => late.promise });
+    c.render(); await flush();
+    if (operation === 'read') byId(c.render(), 'live-chat-refresh').props.onPress();
+    if (operation === 'page') byId(byId(c.render(), 'live-chat-history').props.ListHeaderComponent, 'live-chat-older').props.onPress();
+    if (operation === 'send') { byId(c.render(), 'live-chat-draft').props.onChangeText('late'); byId(c.render(), 'live-chat-send').props.onPress(); }
+    if (transition === 'account') c.auth.user = { id: 'B' };
+    if (transition === 'lobby') c.props.lobbyId = 'other';
+    if (transition === 'logout') c.auth.user = null;
+    if (transition === 'unmount') c.h.unmount();
+    else assert.deepEqual(history(c.render()), []); // first render already hides the old context
+    late.resolve(operation === 'send' ? message('late', 'late') : page([message('late', 'Private old context')])); await flush();
+    if (transition !== 'unmount') assert.ok(!history(c.render()).some(m => m.id === 'late' || m.id === 'm1'));
+    c.h.unmount();
+  }
+});
+test('403/404 on read or send clears history, locks composer, notifies details once and ignores older replies', async () => {
+  for (const status of [403,404]) for (const operation of ['read','send']) {
+    let rejectAccess = false, notifications = 0;
+    const c = chatHost({ listLobbyMessages: async () => { if (rejectAccess) throw chatError(status); return page([message()]); }, sendLobbyMessage: async () => { throw chatError(status); } });
+    c.props.onAccessLost = () => { notifications++; }; c.render(); await flush();
+    if (operation === 'read') { rejectAccess = true; byId(c.render(), 'live-chat-refresh').props.onPress(); }
+    else { byId(c.render(), 'live-chat-draft').props.onChangeText('denied'); byId(c.render(), 'live-chat-send').props.onPress(); }
+    await flush(); assert.deepEqual(history(c.render()), []); assert.equal(notifications, 1);
+    assert.equal(byId(c.render(), 'live-chat-send'), undefined); assert.equal(byId(c.render(), 'live-chat-retry'), undefined);
+    assert.ok(byId(c.render(), 'live-chat-error')); c.h.unmount();
+  }
+  const oldRead = deferred(), send = deferred(); let first = true;
+  const store = new LiveLobbyChatStore({ listLobbyMessages: async () => { if (first) { first = false; return page(); } return oldRead.promise; }, sendLobbyMessage: () => send.promise }, () => 'm');
+  store.setContext('A', lobby.id); await flush(); store.setDraft('draft'); const sending = store.send(); const read = store.reload();
+  send.reject(chatError(403)); await sending; oldRead.resolve(page([message()])); await read;
+  assert.deepEqual(store.getSnapshot().items, []); assert.equal(store.getSnapshot().blocked, true);
+});
+test('membership invalidation immediately hides chat, rechecks access and invalidates old page/send', async () => {
+  const oldPage = deferred(), oldSend = deferred(); let reads = 0;
+  const c = chatHost({ listLobbyMessages: async (_id, before) => { if (before) return oldPage.promise; if (++reads > 1) throw chatError(403); return page([message()], 'older'); }, sendLobbyMessage: () => oldSend.promise });
+  c.render(); await flush(); byId(c.render(), 'live-chat-draft').props.onChangeText('old'); byId(c.render(), 'live-chat-send').props.onPress();
+  byId(byId(c.render(), 'live-chat-history').props.ListHeaderComponent, 'live-chat-older').props.onPress();
+  getLobbyInvalidation(c.auth.lobbyApi).invalidate(); assert.deepEqual(history(c.render()), []);
+  await flush(); oldPage.resolve(page([message('old')])); oldSend.resolve(message('old-send')); await flush();
+  assert.deepEqual(history(c.render()), []); assert.ok(byId(c.render(), 'live-chat-error')); c.h.unmount();
+});
+test('actual details -> live chat -> same details uses one Modal and updates access after denial', async () => {
+  let joined = true, reads = 0, closes = 0;
+  const auth = { user: { id: 'A' }, lobbyApi: { getLobby: async id => { reads++; return { ...lobby, id, startsAt: '2000-01-01T00:00:00Z', membershipStatus: joined ? 'JOINED' : 'LEFT' }; } } };
+  const h = host(auth), { LiveLobbyDetails } = h.load('src/features/home/LiveLobbyDetails.tsx');
+  const render = () => h.render(LiveLobbyDetails, { id: lobby.id, onClose() { closes++; } });
+  render(); await flush(); assert.equal(byId(render(), 'live-chat-open').props.disabled, false); // chat remains open after startsAt
+  byId(render(), 'live-chat-open').props.onPress();
+  const chat = nodes(render()).find(n => n.type === 'LiveLobbyChatScreen');
+  assert.equal(chat.props.lobbyId, lobby.id); assert.equal(nodes(render()).filter(n => n.type === 'Modal').length, 1);
+  chat.props.onBack(); await flush(); assert.equal(nodes(render()).find(n => n.type === 'LiveLobbyChatScreen'), undefined);
+  assert.equal(texts(byId(render(), 'live-lobby-description')), lobby.description); assert.equal(closes, 0);
+  byId(render(), 'live-chat-open').props.onPress(); joined = false;
+  nodes(render()).find(n => n.type === 'LiveLobbyChatScreen').props.onAccessLost(); await flush();
+  nodes(render()).find(n => n.type === 'Modal').props.onRequestClose(); await flush();
+  assert.equal(byId(render(), 'live-chat-open').props.disabled, true); assert.ok(reads >= 3); h.unmount();
+});
+test('message transport encodes cursor, retains Bearer/one auth refresh and never retries uncertain POST', async () => {
+  const calls = []; let postCount = 0, refreshes = 0;
+  const response = (body, status = 200) => new Response(JSON.stringify(body), { status });
+  const client = creationClient(async (url, options) => {
+    if (url.endsWith('/auth/login')) return authReply(1);
+    if (url.endsWith('/auth/refresh')) { refreshes++; return authReply(2); }
+    calls.push({ url, options });
+    if (options.method === 'GET') return response(page());
+    if (++postCount === 1) return response({ error: { code: 'INVALID_ACCESS_TOKEN', message: 'expired' } }, 401);
+    if (postCount === 2) return response(message('stable'));
+    throw new Error('lost response');
+  });
+  await client.login({ email: 'a@example.test', password: 'test-only' });
+  await client.listLobbyMessages(lobby.id, 'a/b+?=');
+  assert.equal(new URL(calls[0].url).searchParams.get('before'), 'a/b+?=');
+  assert.equal(new URL(calls[0].url).searchParams.get('limit'), '30');
+  const payload = { clientMessageId: 'stable', body: 'original' };
+  await client.sendLobbyMessage(lobby.id, payload); assert.equal(refreshes, 1);
+  assert.equal(calls.at(-1).options.headers.Authorization, 'Bearer access-2');
+  assert.deepEqual(calls.at(-1).options.body, calls.at(-2).options.body);
+  await assert.rejects(client.sendLobbyMessage(lobby.id, payload), e => e.code === 'NETWORK_ERROR'); assert.equal(postCount, 3);
+});
+test('message transport and chat store reject stale session responses after explicit account switch', async () => {
+  const late = deferred(); let logins = 0;
+  const client = creationClient(async url => url.endsWith('/auth/login') ? authReply(++logins, logins === 1 ? 'A' : 'B') : late.promise);
+  await client.login({ email: 'a@example.test', password: 'test-only' });
+  const pending = client.sendLobbyMessage(lobby.id, { clientMessageId: 'old', body: 'old' });
+  const rejected = assert.rejects(pending, e => e.code === 'INVALID_REFRESH_TOKEN');
+  await client.login({ email: 'b@example.test', password: 'test-only' }); late.resolve(new Response(JSON.stringify(message('old')))); await rejected;
+});
+test('message conflict is localized and explicit discard keeps draft without pretending delivery', async () => {
+  const c = chatHost({ listLobbyMessages: async () => page(), sendLobbyMessage: async () => { throw new ApiClientError({ statusCode: 409, code: 'MESSAGE_ID_CONFLICT', message: 'conflict' }); } });
+  c.render(); await flush(); byId(c.render(), 'live-chat-draft').props.onChangeText('draft'); byId(c.render(), 'live-chat-send').props.onPress(); await flush();
+  assert.match(texts(byId(c.render(), 'live-chat-send-error')), /идентификатор/);
+  byId(c.render(), 'live-chat-discard-retry').props.onPress();
+  assert.equal(byId(c.render(), 'live-chat-draft').props.value, 'draft'); assert.deepEqual(history(c.render()), []);
+  assert.equal(byId(c.render(), 'live-chat-send').props.disabled, false); c.h.unmount();
+  for (const language of ['ru','en']) {
+    const t = createTranslator(language);
+    for (const key of ['liveChat.forbidden','liveChat.unconfirmed','liveChat.conflict','liveChat.olderError']) assert.notEqual(t(key), key);
+  }
+});
 
 test('Home <-> personal transitions expand nav even when the destination cannot scroll', () => {
   let compact=true;const resets=[];

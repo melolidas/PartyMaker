@@ -37,7 +37,7 @@ export function HomeScreen({ initialLobbyId = null, onInitialLobbyConsumed, onCr
           <Pressable
             testID="open-search"
             accessibilityRole="button"
-            accessibilityLabel={`${t('search.open')} · ${t('lobbies.demo')}`}
+            accessibilityLabel={t('search.open')}
             onPress={() => setSearchOpen(true)}
             style={({ pressed }) => [styles.searchButton, pressed && styles.pressed]}
           >

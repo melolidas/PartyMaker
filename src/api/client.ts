@@ -171,9 +171,10 @@ export class ApiClient {
     return this.protectedRequest<UserProfile>('/users/me', { method: 'GET' });
   }
 
-  listLobbies(after?: string, scope: LobbyScope = 'all'): Promise<LobbyPage> {
+  listLobbies(after?: string, scope: LobbyScope = 'all', q?: string): Promise<LobbyPage> {
     const query = after === undefined ? '' : `&after=${encodeURIComponent(after)}`;
-    return this.protectedRequest<LobbyPage>(`/lobbies?limit=20&scope=${scope}${query}`, { method: 'GET' });
+    const search = q === undefined ? '' : `&q=${encodeURIComponent(q.trim())}`;
+    return this.protectedRequest<LobbyPage>(`/lobbies?limit=20&scope=${scope}${query}${search}`, { method: 'GET' });
   }
 
   getLobby(id: string): Promise<Lobby> {

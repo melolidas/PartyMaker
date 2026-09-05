@@ -1,33 +1,43 @@
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { Feather } from '@expo/vector-icons';
-import { FlatList, Image, KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, FlatList, KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { GestureDetector, type NativeGesture } from 'react-native-gesture-handler';
-import { photos } from '../assets';
+import type { Lobby } from '../api/lobbyTypes';
+import { getLobbyInvalidation } from '../api/lobbyInvalidation';
+import { useAuth } from '../auth/AuthProvider';
 import { PartyIcon } from '../components/icons/PartyIcon';
 import { Screen } from '../components/Screen';
-import { useHomeExperience } from '../features/home/HomeExperienceProvider';
-import { LobbyExtroversionIndicator } from '../features/home/LobbyExtroversionIndicator';
-import { DemoLobby, demoLobbies, getLobbyMembers, isLobbyJoined } from '../features/home/lobbies';
-import { searchLobbies } from '../features/search/searchLobbies';
+import { LiveLobbyMetadata, LobbyCategoryPlaceholder } from '../features/home/LiveLobbyCard';
+import { ExtroversionGauge } from '../features/profile/ExtroversionGauge';
+import { emptyLobbySearch, LobbySearchStore } from '../features/search/lobbySearch';
 import { useI18n } from '../i18n/LocalizationProvider';
 import { colors } from '../theme';
 
 type Props = {
   active: boolean;
   onClose: () => void;
-  onSelectLobby: (lobby: DemoLobby) => void;
+  onSelectLobby: (id: string) => void;
   scrollGesture: NativeGesture;
 };
 
 export function SearchScreen({ active, onClose, onSelectLobby, scrollGesture }: Props) {
   const { t } = useI18n();
-  const [query, setQuery] = useState('');
+  const { lobbyApi, user, status, storageRecoveryRequired } = useAuth();
+  const account = status === 'authenticated' && !storageRecoveryRequired ? user?.id ?? null : null;
+  const store = useMemo(() => new LobbySearchStore((q, after) => lobbyApi.listLobbies(after, 'all', q)), [lobbyApi]);
+  const snapshot = useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot);
+  useEffect(() => {
+    const unsubscribe = getLobbyInvalidation(lobbyApi).subscribe(() => { void store.reload(); });
+    store.setAccount(account);
+    return () => { unsubscribe(); store.setAccount(null); };
+  }, [store, lobbyApi, account]);
+  const state = snapshot.account === account ? snapshot : emptyLobbySearch(account, snapshot.query);
+  const query = state.query;
   const [inputFocused, setInputFocused] = useState(false);
   const input = useRef<TextInput>(null);
-  const list = useRef<FlatList<DemoLobby>>(null);
-  const results = useMemo(() => searchLobbies(demoLobbies, query, t), [query, t]);
+  const list = useRef<FlatList<Lobby>>(null);
   const changeQuery = (value: string) => {
-    setQuery(value);
+    store.setQuery(value);
     list.current?.scrollToOffset({ offset: 0, animated: false });
   };
   const clear = () => {
@@ -45,12 +55,12 @@ export function SearchScreen({ active, onClose, onSelectLobby, scrollGesture }: 
             accessibilityLabel={t('search.back')}
             disabled={!active}
             tabIndex={active ? 0 : -1}
-            onPress={onClose}
+            onPress={() => { store.setAccount(null); onClose(); }}
             style={({ pressed }) => [styles.backButton, pressed && styles.pressed]}
           >
             <Feather name="chevron-left" size={25} color={colors.white} />
           </Pressable>
-          <Text accessibilityRole="header" style={styles.title}>{t('search.title')} · {t('lobbies.demo')}</Text>
+          <Text accessibilityRole="header" style={styles.title}>{t('search.title')}</Text>
         </View>
 
         <View style={[styles.inputRow, inputFocused && styles.inputFocused]}>
@@ -97,7 +107,7 @@ export function SearchScreen({ active, onClose, onSelectLobby, scrollGesture }: 
             testID="search-results"
             style={styles.list}
             contentContainerStyle={styles.listContent}
-            data={results}
+            data={state.items}
             extraData={active}
             keyExtractor={(lobby) => lobby.id}
             keyboardShouldPersistTaps="handled"
@@ -110,20 +120,28 @@ export function SearchScreen({ active, onClose, onSelectLobby, scrollGesture }: 
             ListHeaderComponent={
               <View style={styles.resultsHeading}>
                 <Text accessibilityRole="header" style={styles.sectionTitle}>{t(query.trim() ? 'search.results' : 'search.allLobbies')}</Text>
-                <Text testID="search-result-count" accessibilityLiveRegion="polite" style={styles.count}>{results.length}</Text>
+                <Pressable testID="search-reload" accessibilityRole="button" disabled={!active || !account || state.status === 'loading' || state.loadingMore} onPress={() => void store.reload()}>
+                  <Text style={styles.meta}>{t('lobbies.reload')}</Text>
+                </Pressable>
               </View>
             }
             ListEmptyComponent={
-              <View testID="search-empty" style={styles.empty}>
+              state.status === 'loading' ? <View testID="search-loading" style={styles.empty}><ActivityIndicator color={colors.text} /><Text style={styles.meta}>{t('lobbies.loading')}</Text></View> : state.status === 'ready' ? <View testID="search-empty" style={styles.empty}>
                 <View style={styles.emptyIcon}><PartyIcon name="search" size={30} color={colors.muted} /></View>
                 <Text style={styles.emptyTitle}>{t('search.emptyTitle')}</Text>
                 <Text style={styles.emptyDescription}>{t('search.emptyDescription')}</Text>
                 <Pressable accessibilityRole="button" disabled={!active} tabIndex={active ? 0 : -1} onPress={clear} style={({ pressed }) => [styles.resetButton, pressed && styles.pressed]}>
                   <Text style={styles.resetText}>{t('search.clear')}</Text>
                 </Pressable>
-              </View>
+              </View> : null
             }
-            renderItem={({ item }) => <SearchResult lobby={item} active={active} onPress={() => onSelectLobby(item)} />}
+            ListFooterComponent={state.error ? <View testID="search-error" style={styles.empty}>
+              <Text accessibilityLiveRegion="polite" style={styles.emptyDescription}>{t('lobbies.loadError')}</Text>
+              <Pressable testID="search-retry" accessibilityRole="button" disabled={!active} onPress={() => void (state.status === 'error' ? store.reload() : store.loadMore())} style={styles.resetButton}><Text style={styles.resetText}>{t('auth.retry')}</Text></Pressable>
+            </View> : state.nextCursor ? <Pressable testID="search-more" accessibilityRole="button" disabled={!active || state.loadingMore} onPress={() => void store.loadMore()} style={styles.resetButton}>
+              {state.loadingMore ? <ActivityIndicator color={colors.text} /> : <Text style={styles.resetText}>{t('lobbies.loadMore')}</Text>}
+            </Pressable> : null}
+            renderItem={({ item }) => <SearchResult lobby={item} active={active} onPress={() => onSelectLobby(item.id)} />}
           />
         </GestureDetector>
       </KeyboardAvoidingView>
@@ -131,36 +149,26 @@ export function SearchScreen({ active, onClose, onSelectLobby, scrollGesture }: 
   );
 }
 
-function SearchResult({ lobby, active, onPress }: { lobby: DemoLobby; active: boolean; onPress: () => void }) {
+function SearchResult({ lobby, active, onPress }: { lobby: Lobby; active: boolean; onPress: () => void }) {
   const { t } = useI18n();
-  const { session } = useHomeExperience();
-  const joined = isLobbyJoined(lobby, session);
   return (
     <Pressable
       testID={`search-result-${lobby.id}`}
       accessibilityRole="button"
-      accessibilityLabel={t(lobby.titleKey)}
+      accessibilityLabel={lobby.title}
       accessibilityHint={t('home.openLobby')}
       disabled={!active}
       tabIndex={active ? 0 : -1}
       onPress={onPress}
       style={({ pressed }) => [styles.card, pressed && styles.pressed]}
     >
-      <Image source={photos[lobby.photo]} style={styles.photo} accessible={false} />
+      <View style={styles.photo}><LobbyCategoryPlaceholder category={lobby.category} compact /></View>
       <View style={styles.cardBody}>
         <View style={styles.cardTitleRow}>
-          <Text numberOfLines={1} style={styles.cardTitle}>{t(lobby.titleKey)}</Text>
-          <LobbyExtroversionIndicator lobby={lobby} size={32} />
+          <Text numberOfLines={1} style={styles.cardTitle}>{lobby.title}</Text>
+          {lobby.groupExtroversionLevel !== null ? <ExtroversionGauge level={lobby.groupExtroversionLevel} size={32} accessibilityLabel={`${t('home.groupExtroversion')}: ${lobby.groupExtroversionLevel}`} /> : null}
         </View>
-        <Text numberOfLines={1} style={styles.venue}>{lobby.placeKey ? t(lobby.placeKey) : lobby.place}</Text>
-        <Text numberOfLines={1} style={styles.meta}>{t(lobby.metaKey)}</Text>
-        <View style={styles.cardFooter}>
-          {joined ? <Text style={styles.joined}>{t('home.joined')}</Text> : <View />}
-          <View style={styles.members}>
-            <Feather name="users" size={12} color={colors.muted} />
-            <Text style={styles.memberCount}>{getLobbyMembers(lobby, session)} / {lobby.capacity}</Text>
-          </View>
-        </View>
+        <LiveLobbyMetadata lobby={lobby} />
       </View>
     </Pressable>
   );

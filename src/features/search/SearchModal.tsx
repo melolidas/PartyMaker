@@ -5,17 +5,16 @@ import { useI18n } from '../../i18n/LocalizationProvider';
 import { NavScrollContext } from '../../navigation/NavScrollContext';
 import { SearchScreen } from '../../screens/SearchScreen';
 import { SwipeBackPage } from '../chats/SwipeBackPage';
-import { DemoLobby } from '../home/lobbies';
-import { LobbyPreview } from '../home/LobbyPreview';
+import { LiveLobbyDetails } from '../home/LiveLobbyDetails';
 
 const ignoreNavScroll = () => {};
 
 export function SearchModal({ onClose }: { onClose: () => void }) {
   const { t } = useI18n();
-  const [selectedLobby, setSelectedLobby] = useState<DemoLobby | null>(null);
+  const [selectedLobby, setSelectedLobby] = useState<string | null>(null);
   const requestBack = useRef(onClose);
   const registerBack = useCallback((close: () => void) => { requestBack.current = close; }, []);
-  const openLobby = useCallback((lobby: DemoLobby) => {
+  const openLobby = useCallback((lobby: string) => {
     Keyboard.dismiss();
     setSelectedLobby(lobby);
   }, []);
@@ -26,7 +25,7 @@ export function SearchModal({ onClose }: { onClose: () => void }) {
       animationType="none"
       presentationStyle="overFullScreen"
       onRequestClose={() => selectedLobby ? setSelectedLobby(null) : requestBack.current()}
-      accessibilityLabel={selectedLobby ? t(selectedLobby.titleKey) : t('search.title')}
+      accessibilityLabel={selectedLobby ? t('lobbies.details') : t('search.title')}
     >
       <GestureHandlerRootView style={styles.overlay}>
         <NavScrollContext.Provider value={ignoreNavScroll}>
@@ -41,7 +40,7 @@ export function SearchModal({ onClose }: { onClose: () => void }) {
               <SearchScreen active={selectedLobby === null} onClose={close} onSelectLobby={openLobby} scrollGesture={scrollGesture} />
             )}
           </SwipeBackPage>
-          {selectedLobby ? <LobbyPreview inline lobby={selectedLobby} onClose={() => setSelectedLobby(null)} /> : null}
+          {selectedLobby ? <LiveLobbyDetails id={selectedLobby} onClose={() => setSelectedLobby(null)} /> : null}
         </NavScrollContext.Provider>
       </GestureHandlerRootView>
     </Modal>

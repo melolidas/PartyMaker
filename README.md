@@ -32,7 +32,7 @@ The frontend now uses these backend endpoints through one typed API client:
 - `GET /users/me`
 - `PATCH /users/me`
 - `PUT /users/me/extroversion`
-- `GET /lobbies?scope=all|mine&limit=20&after=<opaque-cursor>`
+- `GET /lobbies?scope=all|mine&q=<literal-search>&limit=20&after=<opaque-cursor>`
 - `GET /lobbies/:id`
 - `POST /lobbies`
 - `POST /lobbies/:id/join`
@@ -56,7 +56,7 @@ If reconciliation temporarily fails, use **Retry recovery / Повторить �
 
 **Restart limitation:** a timeout is an in-memory safety boundary, not proof of durable invalidation. Pending/unknown persistent records are not restored, and a new runtime never clears them merely because its WeakMap is empty. However, if a delayed `committed` write physically completes while revocation/tombstone writes are unavailable, a new runtime can observe matching committed credentials. Without confirmed durable cleanup (or confirmed server revocation), absence of session restoration after restart cannot be guaranteed. The regression suite explicitly covers this limit. If the process dies with an unresolved pending writer and no terminal proof, recovery cannot safely unlock it automatically. No extra markers are added to claim a stronger guarantee.
 
-Profile name, bio, city, country code, and extroversion level are backed by `/users/me`. Home's upcoming catalog, Your lobbies / View all, lobby details and Create Lobby use PostgreSQL through the same authenticated ApiClient. Avatar, gallery, stats, Search, Chat, Moments and Activity remain explicitly labeled demos. Real joining/leaving now works. Chat, invitations, notifications, organizer transfer, cancellation, editing/deleting lobbies and Media are not implemented.
+Profile name, bio, city, country code, and extroversion level are backed by `/users/me`. Home's upcoming catalog, Your lobbies / View all, Search, lobby details and Create Lobby use PostgreSQL through the same authenticated ApiClient. Avatar, gallery, stats, Chat, Moments and Activity remain explicitly labeled demos. Real joining/leaving now works, including from search results. Chat, invitations, notifications, organizer transfer, cancellation, editing/deleting lobbies and Media are not implemented.
 
 ### Run Auth/Profile in Expo Web
 
@@ -84,7 +84,7 @@ Backend CORS defaults to no cross-origin permission. `CORS_ALLOWED_ORIGINS` acce
 
 - Home with independent real upcoming catalog and personal upcoming lobbies
 - Your lobbies / View all: a paginated real list of the current user's upcoming JOINED memberships
-- Search with live filtering of demo lobbies by name and venue
+- Search: real PostgreSQL substring search by title or venue, with paginated results and membership actions
 - Chats with active and archived lobby rows, opened using the paper-plane button on Home
 - Mock lobby conversations with sample messages and a working local composer
 - Moments social feed
@@ -115,7 +115,7 @@ Tap a real card to fetch details from `/lobbies/:id` and join/leave as a regular
 
 Cursor pages are not a database snapshot: events may start or be edited between requests; Refresh obtains a fresh catalog. Existing seed events may already be in the past, so an empty catalog can be correct. Do not reseed/reset an existing database to populate Home: use isolated future test lobbies with known ids, and remove only those fixtures afterward.
 
-For browser smoke testing, sign in at the Expo Web URL above, check the real list and details, then the empty state with no future published fixtures. Temporarily stop only the local API, press Refresh to see an error, restart it and press Retry. The separate demo search/chat tools should remain labeled and never replace the real list.
+For browser smoke testing, sign in at the Expo Web URL above, check the real list and details, then the empty state with no future published fixtures. Temporarily stop only the local API, press Refresh to see an error, restart it and press Retry. The separate demo chat tools remain labeled and never replace the real list or search results.
 
 ## Your lobbies: real upcoming participation
 
@@ -125,7 +125,7 @@ Mine is not filtered from the first all page: an event far beyond that page stil
 
 Personal cards open the same real details with membership actions, never a mock chat. Group counts and mean extroversion still use **all** JOINED members. Returning from View all reloads Home's lists; returning after successful creation also reloads both scopes and opens the new id even if absent from their first pages. Logout/account switch discards list state and late reload/page results. No demo fallback exists.
 
-Browser regression: create an isolated lobby → Home personal section → View all → details → logout/relogin → verify membership persists. Sign in as a different isolated user: the lobby may appear in all, but not mine without their own JOINED membership. Also test the empty/Create state and Refresh → error → Retry by temporarily stopping only the local API. Use known fixture ids; never reset/reseed or modify pre-existing records. Completed-event history, editing/deleting, real chats/search and Media remain unavailable.
+Browser regression: create an isolated lobby → Home personal section → View all → details → logout/relogin → verify membership persists. Sign in as a different isolated user: the lobby may appear in all, but not mine without their own JOINED membership. Also test the empty/Create state and Refresh → error → Retry by temporarily stopping only the local API. Use known fixture ids; never reset/reseed or modify pre-existing records. Completed-event history, editing/deleting, real chats and Media remain unavailable.
 
 ## Create a real lobby
 
@@ -143,7 +143,9 @@ Details use explicit server `membershipStatus` (null/JOINED/LEFT/REMOVED) and `i
 
 Both actions use the existing Bearer ApiClient. A synchronous UI lock prevents double/opposite taps until the response and verification GET complete. No membership change is shown optimistically. A network/ambiguous failure is **not** success: the UI explains the uncertainty and rechecks GET. If verification fails, actions stay disabled until Refresh/Retry succeeds. A later explicit retry is allowed; no automatic network POST retry is made. The existing bounded auth-refresh retry after INVALID_ACCESS_TOKEN remains.
 
-Each ApiClient has a shared invalidation channel (no credentials or page cache). A membership request's completion/error invalidates all mounted catalog, compact personal and full personal stores and details. List generations advance synchronously, so earlier reload/page results cannot restore old counts or memberships. Unmounted lists load afresh; other devices/users see changes on their next load/Refresh (no push notifications or polling). Late responses after logout/account switch are rejected before invalidating the new account. SessionCoordinator and storage/recovery protocols are unchanged.
+Each ApiClient has a shared invalidation channel (no credentials or page cache). A membership request's completion/error invalidates all mounted catalog, compact personal, full personal and search stores and details. List generations advance synchronously, so earlier reload/page results cannot restore old counts or memberships. Search reloads its current query independently. Unmounted lists load afresh; other devices/users see changes on their next load/Refresh (no push notifications or polling). Late responses after logout/account switch are rejected before invalidating the new account. SessionCoordinator and storage/recovery protocols are unchanged.
+
+Open details subscribe to the same app clock as countdowns: join/leave becomes visibly unavailable when startsAt is reached (on the next shared one-second tick, or on foreground resume), without another GET or a per-card timer. The action handler and backend still independently check time.
 
 Home ↔ View all explicitly expands navCompact on both transitions, including a short destination with no upward scroll possible. The scroll algorithm itself is unchanged.
 
@@ -155,11 +157,21 @@ Home's personal section and View all are real API data, not demo memberships. Th
 
 Only demo cards retain localized sample schedules/distances and a countdown relative to app launch. These are separate from real event timestamps.
 
-Only demo chat rows open mock conversations. Search results open the demo preview, where Join updates only local demo membership and chat lists. This never joins a real lobby, sends notifications or calls a Lobby mutation endpoint. Demo membership resets on reload, logout or account switch.
+Only demo chat rows open mock conversations. Remaining demo previews and joining affect only local demo membership and chat lists; real search results never enter that path. Demo membership resets on reload, logout or account switch.
 
 Home's “View all” opens PersonalLobbiesScreen and fetches scope=mine; it does not open ChatsModal or its legacy YourLobbiesScreen demo list.
 
-Home has a compact header with a white magnifying glass on a dark circular background at the top left, and the existing Chats button at the right. Search opens a separate page with live filtering of demo lobbies by localized name and venue. Empty input shows all lobbies; the clear button resets the query, and an empty state handles unmatched searches. Result cards open the existing lobby preview within the same native modal, with local demo joining. Back or a left-edge swipe returns to Home. Search uses no backend or persistent storage.
+## Search: real lobbies
+
+Home's magnifying glass opens the existing search page; Back and the left-edge swipe return to Home. Results open LiveLobbyDetails, with real join/leave and no mock conversation. Closing details keeps the query and search page. Keyboard dismissal, clear/focus and scroll gestures are retained. Search has no demo badge; Chats still does.
+
+`GET /lobbies?q=...` accepts a trimmed string of at most 100 characters. Missing/blank q means the ordinary upcoming catalog. It matches a **literal case-insensitive substring** of title OR venueName, not translated keys, individual words, distance, or description. `%`, `_` and backslash are literal characters. Arrays/objects/overlong queries return `400 VALIDATION_FAILED`. Filtering is in PostgreSQL before pagination; q, scope=all|mine and the startsAt/id cursor apply together. Changing q resets the cursor. No total count is returned or inferred from loaded cards.
+
+The search store owns its pages and errors. Input changes immediately invalidate all older requests and clear old results, then debounce the next GET by 300ms. Loading, empty, error/retry, Refresh and Load more states have no demo fallback. Next-page errors retain the loaded cards and cursor; retries cannot start duplicate page requests. Closing/unmounting, logout, account switch and membership invalidation discard late responses. No search text or tokens are persisted by search.
+
+PostgreSQL must provide its deterministic ICU collation `und-x-icu`; it is explicitly used so Cyrillic and Latin case matching also works on the existing local database initialized with locale C. The page ids and safe DTO are read in one RepeatableRead transaction; separate pages are not a frozen snapshot. No extensions, schema changes, geosearch, ranking or search engine were added. For large datasets, unindexed substring search will need a separately measured indexing stage.
+
+Browser smoke: create a known isolated event → find it by title and venue (including different case and literal `%_`) → another user opens details, joins and sees updated search and mine → leave removes it from mine and updates search counters. Test empty search, no matches, clear, and API-offline → Retry. Remove only these fixtures by known ids. Browser verification does not imply a physical-phone test.
 
 ## Chats (demo)
 

@@ -236,7 +236,7 @@ test('Swagger documents safe Lobby DTOs, pagination and Bearer protection', asyn
   const parameters = response.body.paths['/api/v1/lobbies'].get.parameters as {
     name: string; in: string; required: boolean; schema: Record<string, unknown>;
   }[];
-  assert.deepEqual(parameters.map((parameter) => parameter.name).sort(), ['after', 'limit', 'scope']);
+  assert.deepEqual(parameters.map((parameter) => parameter.name).sort(), ['after', 'limit', 'q', 'scope']);
   assert.deepEqual(parameters.find((parameter) => parameter.name === 'scope')?.schema.enum, ['all', 'mine']);
   assert.equal(parameters.find((parameter) => parameter.name === 'scope')?.schema.default, 'all');
   const limit = parameters.find((parameter) => parameter.name === 'limit')!;

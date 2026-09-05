@@ -1,5 +1,5 @@
 import { BadRequestException, ConflictException, Inject, Injectable, NotFoundException } from '@nestjs/common';
-import type { Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { isUUID } from 'class-validator';
 
 import { PrismaService } from '../prisma/prisma.service';
@@ -80,7 +80,27 @@ export class LobbiesService {
 
   async list(query: ListLobbiesQueryDto, userId: string): Promise<LobbyPageResponseDto> {
     const cursor = query.after === undefined ? null : decodeCursor(query.after);
-    const rows = await this.prisma.lobby.findMany({
+    // Escape ILIKE metacharacters, including the escape character itself.
+    const search = query.q?.replace(/[\\%_]/g, '\\$&');
+    const rows = search ? await this.prisma.$transaction(async (tx) => {
+      // Explicit Unicode collation also handles Cyrillic on databases initialized
+      // with locale C. Parameterized filtering happens BEFORE tuple pagination.
+      const matches = await tx.$queryRaw<{ id: string }[]>(Prisma.sql`
+        SELECT l.id FROM "Lobby" l
+        WHERE l.status = 'PUBLISHED' AND l.starts_at > ${new Date()}
+          AND (l.title COLLATE "und-x-icu" ILIKE ${`%${search}%`}
+            OR l.venue_name COLLATE "und-x-icu" ILIKE ${`%${search}%`})
+          ${query.scope === 'mine' ? Prisma.sql`AND EXISTS (
+            SELECT 1 FROM "LobbyMember" m WHERE m.lobby_id = l.id
+              AND m.user_id = ${userId}::uuid AND m.status = 'JOINED'
+          )` : Prisma.empty}
+          ${cursor ? Prisma.sql`AND (l.starts_at, l.id) > (${new Date(cursor.startsAt)}, ${cursor.id}::uuid)` : Prisma.empty}
+        ORDER BY l.starts_at ASC, l.id ASC LIMIT ${query.limit + 1}
+      `);
+      // Same snapshot for the page and its safe whole-group DTO, never raw rows.
+      return tx.lobby.findMany({ where: { id: { in: matches.map(row => row.id) } },
+        orderBy: [{ startsAt: 'asc' }, { id: 'asc' }], select: lobbySelect(userId) });
+    }, { isolationLevel: 'RepeatableRead' }) : await this.prisma.lobby.findMany({
       where: {
         status: 'PUBLISHED', startsAt: { gt: new Date() },
         // Filter lobby visibility, not the members selected for whole-group statistics.

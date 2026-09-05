@@ -27,6 +27,6 @@ export type LobbyApi = LobbyReadApi & {
   leaveLobby: (id: string) => Promise<Lobby>;
 };
 export type LobbyReadApi = {
-  listLobbies: (after?: string, scope?: LobbyScope) => Promise<LobbyPage>;
+  listLobbies: (after?: string, scope?: LobbyScope, q?: string) => Promise<LobbyPage>;
   getLobby: (id: string) => Promise<Lobby>;
 };

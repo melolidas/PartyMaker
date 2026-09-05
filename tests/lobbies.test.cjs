@@ -11,6 +11,7 @@ const { ApiClientError } = require('../.expo/lobby-tests/api/errors.js');
 const { getLobbyInvalidation } = require('../.expo/lobby-tests/api/lobbyInvalidation.js');
 const detailsLogic = require('../.expo/lobby-tests/features/home/lobbyDetails.js');
 const { LobbyDetailsStore, membershipAction } = detailsLogic;
+const searchLogic = require('../.expo/lobby-tests/features/search/lobbySearch.js');
 const createForm = require('../.expo/lobby-tests/features/home/createLobbyForm.js');
 const { CreateLobbyFormStore, validateLobbyForm, bishkekDateTimeToInstant } = createForm;
 
@@ -37,6 +38,7 @@ function host(auth) {
   const same = (a, b) => a && b && a.length === b.length && a.every((v, i) => Object.is(v, b[i]));
   const react = {
     useContext(context) { return context.value; },
+    useRef(value) { return react.useMemo(() => ({ current: value }), []); },
     useState(initial) {
       const at = cursor++;
       if (!slots[at]) slots[at] = { value: typeof initial === 'function' ? initial() : initial };
@@ -61,11 +63,11 @@ function host(auth) {
   const jsx = (type, props) => ({ type, props });
   function load(file, extra = {}, expose = '') {
     const exports = {};
-    const native = Object.fromEntries(['View','Text','Pressable','ActivityIndicator','ScrollView','Modal','TextInput','KeyboardAvoidingView'].map(v => [v,v]));
+    const native = Object.fromEntries(['View','Text','Pressable','ActivityIndicator','ScrollView','FlatList','Modal','TextInput','KeyboardAvoidingView'].map(v => [v,v]));
     const mocks = {
       react,
       'react/jsx-runtime': { jsx, jsxs: jsx, Fragment: 'Fragment' },
-      'react-native': { ...native, StyleSheet: { create: v => v }, Platform: { OS: 'web', select: v => v.web }, BackHandler: { addEventListener: () => ({ remove() {} }) } },
+      'react-native': { ...native, Keyboard: { dismiss() {} }, StyleSheet: { create: v => v }, Platform: { OS: 'web', select: v => v.web }, BackHandler: { addEventListener: () => ({ remove() {} }) } },
       '@expo/vector-icons': { Feather: 'Feather' },
       '../../auth/AuthProvider': { useAuth: () => auth },
       '../../i18n/LocalizationProvider': { useI18n: () => ({ t: createTranslator('ru'), language: 'ru' }) },
@@ -73,6 +75,7 @@ function host(auth) {
       '../../api/errors': { ApiClientError },
       '../../api/lobbyInvalidation': { getLobbyInvalidation },
       './lobbyDetails': detailsLogic,
+      './HomeExperienceProvider': { useHomeClock: () => Date.now() },
       '../navigation/NavScrollContext': { NavScrollContext: { value() {} } },
       './lobbyFeed': { LobbyFeedStore, formatLobbyStartsAt, emptyLobbyFeed: require('../.expo/lobby-tests/features/home/lobbyFeed.js').emptyLobbyFeed },
       './LiveLobbyCard': { LiveLobbyCard: 'LiveLobbyCard', LiveLobbyMetadata: 'LiveLobbyMetadata', LobbyCategoryPlaceholder: 'LobbyCategoryPlaceholder' },
@@ -524,7 +527,8 @@ test('membership completion after account switch/logout/unmount cannot alter det
   }
 });
 
-test('actual shared invalidation refreshes all/Home mine/full mine/details and rejects old GET/page results', async () => {
+test('actual shared invalidation refreshes search/all/Home mine/full mine/details and rejects old GET/page results', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
   let server=lobby;let oldReads=false;const pending=[];const listCalls=[];
   const response=value=>new Response(JSON.stringify(value));
   const client=creationClient(async(url)=>{
@@ -546,25 +550,32 @@ test('actual shared invalidation refreshes all/Home mine/full mine/details and r
   });
   const detailsHost=host(auth),{LiveLobbyDetails}=detailsHost.load('src/features/home/LiveLobbyDetails.tsx');
   const details=()=>detailsHost.render(LiveLobbyDetails,{id:lobby.id,onClose(){}});
-  feeds.forEach(f=>f.render());details();await flush();
+  const search = mountSearch(auth);
+  feeds.forEach(f=>f.render());details();search.render();await flush();
+  byId(search.render(),'search-input').props.onChangeText('demo.pizza');t.mock.timers.tick(300);await flush();
   oldReads=true;
   byId(feeds[0].render(),'lobbies-load-more').props.onPress();
   for(const feed of feeds.slice(1))button(feed.render(),'Обновить').props.onPress();
   byId(details(),'membership-refresh').props.onPress();
-  await flush();assert.equal(pending.length,4);
+  byId(search.render(),'search-more').props.onPress();
+  await flush();assert.equal(pending.length,5);
   oldReads=false;await client.joinLobby(lobby.id);await flush();
   for(const feed of feeds)assert.equal(nodes(feed.render()).find(n=>n.type==='LiveLobbyCard').props.lobby.isJoined,true);
   assert.equal(nodes(details()).find(n=>n.type==='LiveLobbyMetadata').props.lobby.joinedCount,3);
+  assert.equal(search.rows()[0].isJoined,true);assert.equal(byId(search.render(),'search-input').props.value,'demo.pizza');
   pending[0].resolve(response(page([{...lobby,id:'stale-page'}])));
   pending[1].resolve(response(page()));pending[2].resolve(response(page()));pending[3].resolve(response(lobby));await flush();
+  pending[4].resolve(response(page([{...lobby,id:'old-search-page'}])));await flush();
+  assert.deepEqual(search.rows().map(l=>l.id),[lobby.id]);assert.equal(search.rows()[0].isJoined,true);
   for(const feed of feeds)assert.deepEqual(nodes(feed.render()).filter(n=>n.type==='LiveLobbyCard').map(n=>n.props.lobby.id),[lobby.id]);
   assert.equal(nodes(details()).find(n=>n.type==='LiveLobbyMetadata').props.lobby.isJoined,true);
   await client.leaveLobby(lobby.id);await flush();
   for(const feed of feeds.slice(1))assert.ok(byId(feed.render(),'mine-lobbies-empty'));
   assert.equal(nodes(feeds[0].render()).find(n=>n.type==='LiveLobbyCard').props.lobby.joinedCount,2);
   assert.equal(nodes(details()).find(n=>n.type==='LiveLobbyMetadata').props.lobby.membershipStatus,'LEFT');
+  assert.equal(search.rows()[0].membershipStatus,'LEFT');assert.equal(search.rows()[0].joinedCount,2);
   assert.equal(listCalls.filter(s=>s==='mine').length,6,'Both independent mine stores refreshed on both actions');
-  feeds.forEach(f=>f.h.unmount());detailsHost.unmount();
+  feeds.forEach(f=>f.h.unmount());detailsHost.unmount();search.h.unmount();
 });
 
 test('late membership transport response cannot invalidate or mutate another session; POST is bounded', async () => {
@@ -669,6 +680,148 @@ const personalScreenMocks = auth => ({
   ...screenMocks(auth),
   '../features/home/LiveLobbyFeed':{LiveLobbyFeed:'LiveLobbyFeed'},
   '../features/home/LiveLobbyDetails':{LiveLobbyDetails:'LiveLobbyDetails'},
+});
+
+function mountSearch(auth, props = {}) {
+  const h = host(auth);
+  const { SearchScreen, SearchResult } = h.load('src/screens/SearchScreen.tsx', {
+    ...screenMocks(auth),
+    '../api/lobbyInvalidation': { getLobbyInvalidation },
+    '../features/search/lobbySearch': searchLogic,
+    '../features/home/LiveLobbyCard': { LiveLobbyMetadata: 'LiveLobbyMetadata', LobbyCategoryPlaceholder: 'LobbyCategoryPlaceholder' },
+    '../features/profile/ExtroversionGauge': { ExtroversionGauge: 'ExtroversionGauge' },
+    '../components/icons/PartyIcon': { PartyIcon: 'PartyIcon' },
+    'react-native-gesture-handler': { GestureDetector: 'GestureDetector' },
+  }, 'SearchResult');
+  const render = () => {
+    const tree = h.render(SearchScreen, { active: true, onClose() {}, onSelectLobby() {}, scrollGesture: {}, ...props });
+    const list = byId(tree, 'search-results').props;
+    return [tree, list.ListHeaderComponent, list.data.length ? null : list.ListEmptyComponent, list.ListFooterComponent,
+      ...list.data.map(item => SearchResult(list.renderItem({ item }).props))];
+  };
+  return { h, render, rows: () => byId(render(), 'search-results').props.data };
+}
+
+test('details react to the shared clock crossing startsAt, without pressing or issuing another GET', async () => {
+  for (const joined of [false, true]) {
+    let now = Date.parse(lobby.startsAt) - 1, reads = 0;
+    const h = host({ user: { id: 'A' }, lobbyApi: { getLobby: async () => { reads++; return joined ? joinedLobby : lobby; } } });
+    const { LiveLobbyDetails } = h.load('src/features/home/LiveLobbyDetails.tsx', { './HomeExperienceProvider': { useHomeClock: () => now } });
+    const render = () => h.render(LiveLobbyDetails, { id: lobby.id, onClose() {} });
+    render(); await flush(); assert.equal(byId(render(), 'membership-action').props.disabled, false);
+    now++; assert.equal(byId(render(), 'membership-action').props.disabled, true);
+    assert.equal(texts(byId(render(), 'membership-reason')), createTranslator('ru')('membership.started'));
+    assert.equal(reads, 1); h.unmount();
+  }
+});
+
+test('actual search input debounces 300ms, clears to server catalog, renders loading/empty/error and retry', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const calls = []; let next = deferred();
+  const auth = { status: 'authenticated', user: { id: 'A' }, lobbyApi: { listLobbies: (after, scope, q) => { calls.push({ after, scope, q }); return next.promise; } } };
+  let selected;
+  const s = mountSearch(auth, { onSelectLobby(id) { selected = id; } });
+  assert.ok(byId(s.render(), 'search-loading')); next.resolve(page()); await flush();
+  assert.ok(byId(s.render(), 'search-empty')); assert.equal(calls[0].q, '');
+  next = deferred(); byId(s.render(), 'search-input').props.onChangeText('  МЯЧ  ');
+  assert.equal(s.rows().length, 0); assert.ok(byId(s.render(), 'search-loading'));
+  t.mock.timers.tick(299); assert.equal(calls.length, 1);
+  t.mock.timers.tick(1); assert.deepEqual(calls.at(-1), { after: undefined, scope: 'all', q: 'МЯЧ' });
+  next.reject(Error('offline')); await flush(); assert.ok(byId(s.render(), 'search-error')); assert.equal(s.rows().length, 0);
+  next = deferred(); byId(s.render(), 'search-retry').props.onPress(); next.resolve(page([lobby])); await flush();
+  assert.equal(s.rows()[0].title, lobby.title); assert.equal(byId(s.render(), 'search-result-count'), undefined);
+  byId(s.render(), `search-result-${lobby.id}`).props.onPress(); assert.equal(selected, lobby.id);
+  assert.ok(nodes(s.render()).find(n => n.type === 'LobbyCategoryPlaceholder'));
+  assert.equal(nodes(s.render()).find(n => n.type === 'LiveLobbyMetadata').props.lobby, lobby);
+  assert.doesNotMatch(texts(s.render()), /демо/i);
+  byId(s.render(), 'search-clear').props.onPress(); assert.equal(byId(s.render(), 'search-input').props.value, '');
+  assert.equal(s.rows().length, 0); t.mock.timers.tick(300); await flush();
+  assert.deepEqual(calls.at(-1), { after: undefined, scope: 'all', q: '' }); s.h.unmount();
+});
+
+test('search invalidates before debounce, drops reverse-order responses and old pagination, retaining new query', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const calls = [];
+  const s = mountSearch({ status: 'authenticated', user: { id: 'A' }, lobbyApi: { listLobbies: (after, scope, q) => { const d = deferred(); calls.push({ after, q, ...d }); return d.promise; } } });
+  s.render(); byId(s.render(), 'search-input').props.onChangeText('A');
+  calls[0].resolve(page([lobby])); await flush(); assert.equal(s.rows().length, 0, 'old reply during new debounce');
+  t.mock.timers.tick(300); byId(s.render(), 'search-input').props.onChangeText('B'); t.mock.timers.tick(300);
+  calls[2].resolve(page([{ ...lobby, title: 'B' }], 'b-page')); await flush();
+  calls[1].resolve(page([{ ...lobby, title: 'A' }])); await flush(); assert.equal(s.rows()[0].title, 'B');
+  const press = byId(s.render(), 'search-more').props.onPress; press(); press();
+  assert.equal(calls.length, 4); assert.equal(calls[3].after, 'b-page'); assert.equal(calls[3].q, 'B');
+  byId(s.render(), 'search-input').props.onChangeText('C');
+  calls[3].resolve(page([{ ...lobby, id: 'old-page' }])); await flush(); assert.equal(s.rows().length, 0);
+  t.mock.timers.tick(300); assert.equal(calls[4].after, undefined); assert.equal(calls[4].q, 'C');
+  s.h.unmount(); calls[4].resolve(page()); await flush();
+});
+
+test('search next-page error preserves cards and cursor; explicit retry keeps q and coalesces page loads', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  let next = Promise.resolve(page([lobby], 'next')); const calls = [];
+  const s = mountSearch({ status: 'authenticated', user: { id: 'A' }, lobbyApi: { listLobbies: (after, scope, q) => { calls.push({ after, q }); return next; } } });
+  s.render(); byId(s.render(), 'search-input').props.onChangeText('food'); t.mock.timers.tick(300); await flush();
+  next = Promise.reject(Error('page offline')); byId(s.render(), 'search-more').props.onPress(); await flush();
+  assert.equal(s.rows().length, 1); assert.ok(byId(s.render(), 'search-error'));
+  const pending = deferred(); next = pending.promise; const retry = byId(s.render(), 'search-retry').props.onPress; retry(); retry();
+  assert.deepEqual(calls.at(-1), { after: 'next', q: 'food' }); assert.equal(calls.length, 4);
+  pending.resolve(page([{ ...lobby, id: 'two' }])); await flush(); assert.equal(s.rows().length, 2);
+  assert.equal(byId(s.render(), 'search-error'), undefined); assert.equal(byId(s.render(), 'search-more'), undefined); s.h.unmount();
+});
+
+test('actual search closes, logs out and switches accounts without late reads or debounce returning old cards', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  for (const mode of ['close', 'unmount', 'logout', 'switch', 'recovery']) {
+    const late = deferred(); let next = late.promise, closes = 0;
+    const auth = { status: 'authenticated', user: { id: 'A' }, lobbyApi: { listLobbies: () => next } };
+    const s = mountSearch(auth, { onClose() { closes++; } }); s.render();
+    if (mode === 'close') byId(s.render(), 'search-back').props.onPress();
+    else if (mode === 'unmount') s.h.unmount();
+    else {
+      auth.user = mode === 'switch' ? { id: 'B' } : null; auth.storageRecoveryRequired = mode === 'recovery';
+      next = Promise.resolve(page([{ ...lobby, title: 'B only' }]));
+      assert.equal(s.rows().length, 0); await flush();
+    }
+    late.resolve(page([{ ...lobby, title: 'Late A' }])); await flush();
+    if (mode !== 'unmount') assert.deepEqual(s.rows().map(l => l.title), mode === 'switch' ? ['B only'] : []);
+    assert.equal(closes, mode === 'close' ? 1 : 0); s.h.unmount();
+  }
+  let calls = 0;
+  const s = mountSearch({ status: 'authenticated', user: { id: 'A' }, lobbyApi: { listLobbies: async () => { calls++; return page(); } } });
+  s.render(); byId(s.render(), 'search-input').props.onChangeText('never sent'); s.h.unmount();
+  t.mock.timers.tick(300); await flush(); assert.equal(calls, 1);
+});
+
+test('actual SearchModal opens LiveLobbyDetails by real id, preserves SearchScreen on return and swipe wiring', () => {
+  const h = host({}); let dismissed = 0, closed = 0;
+  const { SearchModal } = h.load('src/features/search/SearchModal.tsx', {
+    '../../navigation/NavScrollContext': { NavScrollContext: { Provider: 'NavProvider' } },
+    '../../screens/SearchScreen': { SearchScreen: 'SearchScreen' },
+    '../chats/SwipeBackPage': { SwipeBackPage: 'SwipeBackPage' },
+    '../home/LiveLobbyDetails': { LiveLobbyDetails: 'LiveLobbyDetails' },
+    'react-native-gesture-handler': { GestureHandlerRootView: 'GestureHandlerRootView' },
+  });
+  const render = () => h.render(SearchModal, { onClose() { closed++; } });
+  const swipe = () => nodes(render()).find(n => n.type === 'SwipeBackPage');
+  const back = () => { dismissed++; };
+  swipe().props.onBackReady(back);
+  const screen = swipe().props.children(back, 'native-gesture');
+  assert.equal(screen.props.scrollGesture, 'native-gesture'); screen.props.onSelectLobby(lobby.id);
+  assert.equal(swipe().props.active, false);
+  const details = nodes(render()).find(n => n.type === 'LiveLobbyDetails'); assert.equal(details.props.id, lobby.id);
+  details.props.onClose(); assert.equal(swipe().props.active, true);
+  assert.equal(nodes(render()).find(n => n.type === 'LiveLobbyDetails'), undefined);
+  render().props.onRequestClose(); assert.equal(dismissed, 1); swipe().props.onClose(); assert.equal(closed, 1); h.unmount();
+});
+
+test('ApiClient encodes literal search q and keeps scope/cursor and Bearer in the existing protected path', async () => {
+  const requests = [];
+  const client = creationClient(async (url, options) => { if (url.endsWith('/auth/login')) return authReply(1); requests.push({ url: new URL(url), options }); return new Response(JSON.stringify(page())); });
+  await client.login({ email: 'a@example.test', password: 'test-only' });
+  await client.listLobbies('opaque+/=?', 'mine', '  Мяч 50%_\\ & cafe  ');
+  const { url, options } = requests[0];
+  assert.equal(url.searchParams.get('q'), 'Мяч 50%_\\ & cafe'); assert.equal(url.searchParams.get('after'), 'opaque+/=?');
+  assert.equal(url.searchParams.get('scope'), 'mine'); assert.ok(new Headers(options.headers).get('Authorization'));
 });
 
 test('Home View all opens real personal route and personal cards open LiveLobbyDetails, never a conversation', () => {

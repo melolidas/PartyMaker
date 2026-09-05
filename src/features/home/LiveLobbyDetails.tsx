@@ -7,10 +7,12 @@ import { useAuth } from '../../auth/AuthProvider';
 import { useI18n } from '../../i18n/LocalizationProvider';
 import { colors, radius } from '../../theme';
 import { LiveLobbyMetadata, LobbyCategoryPlaceholder } from './LiveLobbyCard';
+import { useHomeClock } from './HomeExperienceProvider';
 
 export function LiveLobbyDetails({ id, onClose }: { id: string; onClose: () => void }) {
   const { lobbyApi, user, storageRecoveryRequired } = useAuth();
   const { t } = useI18n();
+  const now = useHomeClock();
   const account = storageRecoveryRequired ? null : user?.id ?? null;
   const store = useMemo(() => new LobbyDetailsStore(lobbyApi), [lobbyApi]);
   const snapshot = useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot);
@@ -21,7 +23,7 @@ export function LiveLobbyDetails({ id, onClose }: { id: string; onClose: () => v
   }, [store, lobbyApi, account, id]);
   const current = snapshot.account === account && snapshot.id === id ? snapshot : emptyLobbyDetails(account, id);
   const lobby = current.lobby;
-  const intent = lobby ? membershipAction(lobby) : null;
+  const intent = lobby ? membershipAction(lobby, now) : null;
   const busy = current.loading || current.mutating;
   return <Modal visible transparent animationType="fade" onRequestClose={onClose}>
     <View style={styles.overlay}>

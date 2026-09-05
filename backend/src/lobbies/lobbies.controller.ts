@@ -58,7 +58,7 @@ export class LobbiesController {
   }
 
   @Get()
-  @ApiOperation({ summary: 'Upcoming published lobbies, ordered by startsAt ASC then id ASC' })
+  @ApiOperation({ summary: 'Upcoming published lobbies, ordered by startsAt ASC then id ASC', description: 'Optional literal case-insensitive substring q matches title OR venueName in PostgreSQL before pagination. Search, scope and cursor apply together.' })
   @ApiOkResponse({ type: LobbyPageResponseDto })
   @ApiExtraModels(ListLobbiesQueryDto)
   list(@Query() query: ListLobbiesQueryDto, @CurrentAuth() auth: AuthContext): Promise<LobbyPageResponseDto> {

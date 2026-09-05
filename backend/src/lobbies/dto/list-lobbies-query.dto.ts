@@ -3,6 +3,13 @@ import { Transform } from 'class-transformer';
 import { IsIn, IsInt, IsOptional, IsString, Max, MaxLength, Min } from 'class-validator';
 
 export class ListLobbiesQueryDto {
+  @ApiPropertyOptional({ maxLength: 100, description: 'Trimmed, case-insensitive literal substring of title or venueName. Empty means no search filter; %, _ and backslash are literal.' })
+  @Transform(({ value }: { value: unknown }) => typeof value === 'string' ? value.trim() : value)
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  q?: string;
+
   @ApiPropertyOptional({ enum: ['all', 'mine'], default: 'all', description: 'mine: future published lobbies where the Bearer user has a JOINED membership' })
   @IsIn(['all', 'mine'])
   scope: 'all' | 'mine' = 'all';

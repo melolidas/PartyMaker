@@ -109,7 +109,7 @@ The shared `configureApp` applies the same policy in tests and production bootst
 
 `npm run test:cors` runs the CORS/configuration checks without PostgreSQL or `.env`. The same tests also run in `npm test`, alongside the database-backed Auth/Profile suite.
 
-On web, refresh tokens remain **memory-only**; reloading the page requires explicit sign-in. There is no cookie or localStorage session persistence. Profile changes and newly created lobbies persist in PostgreSQL. Home loads real upcoming lobbies, personal memberships and details with working join/leave. Editing/deleting lobbies, Search, Chat, Moments, Activity/Notifications and Media APIs remain unimplemented; existing demo sections stay separate and labeled.
+On web, refresh tokens remain **memory-only**; reloading the page requires explicit sign-in. There is no cookie or localStorage session persistence. Profile changes and newly created lobbies persist in PostgreSQL. Home and Search load real upcoming lobbies, personal memberships and details with working join/leave. Editing/deleting lobbies, Chat, Moments, Activity/Notifications and Media APIs remain unimplemented; existing demo sections stay separate and labeled.
 
 ## Auth and profile API
 
@@ -153,6 +153,16 @@ Passwords are hashed with Argon2id. Refresh tokens are random opaque values; onl
 ## Lobby API: catalog, personal upcoming list, details and creation
 
 All Lobby endpoints require the existing Bearer access-token guard. Swagger documents their DTOs and validation errors; no database schema change is needed.
+
+### Literal search
+
+Optional `q` on `GET /api/v1/lobbies` is a string, trimmed, maximum 100 characters. Missing or whitespace-only q retains the ordinary catalog. Match is a case-insensitive substring of **title OR venueName** (not description). `%`, `_` and `\` are escaped as literal characters, not patterns. Arrays, nested objects and overlong strings return the existing `400 VALIDATION_FAILED` envelope.
+
+Search requires PostgreSQL's built-in deterministic ICU collation `und-x-icu` (available on the configured local PostgreSQL). A parameterized query uses it explicitly for Cyrillic and Latin, even when database locale is `C`; no user input is interpolated as SQL. Search, future PUBLISHED visibility, Bearer JOINED membership for mine, and tuple cursor conditions are all combined **before** startsAt/id ordering and limit. The matching page ids and existing safe DTO are read in one RepeatableRead transaction. No internal raw rows are returned; whole-group statistics are unchanged. Missing/blank q keeps the original Prisma catalog path. Separate cursor requests are not a fixed snapshot.
+
+Check ICU availability on a separately provisioned database with `SELECT collname FROM pg_collation WHERE collname = 'und-x-icu';`. No extension, schema migration, alternate search service, ranking, word splitting or geographic search is added. Large-volume substring indexing is deferred. See [PostgreSQL pattern matching](https://www.postgresql.org/docs/17/functions-matching.html) for literal escaping and collation-dependent ILIKE behavior.
+
+Example: `GET /api/v1/lobbies?scope=mine&q=Sport%20Court&limit=20&after=<opaque-cursor>`. Reuse the same q/scope for subsequent pages; reset after when changing search. No total count is reported. Real PostgreSQL tests cover Cyrillic/Latin case, literal metacharacters, malformed q, hidden/past events, mine and equal-time multi-page cursor composition using only isolated fixtures.
 
 - `GET /api/v1/lobbies?limit=20&after=<cursor>` returns `{ "items": [...], "nextCursor": "..." }` (or `null` for the last page). `limit` is an integer from 1 to 50, default 20. `after` is the opaque keyset cursor returned by the preceding page; malformed cursors return `400 VALIDATION_FAILED`. Cursor dates must be canonical UTC ISO timestamps with a four-digit AD year (0001–9999); extended years such as `+275760` are rejected before Prisma rather than producing 500.
 - The catalog includes only `PUBLISHED` events with `startsAt > now`, sorted by `startsAt ASC, id ASC`. Equal timestamps use id as the stable tie-breaker. Each request evaluates the current time; pages are not a frozen snapshot of concurrent event edits.

@@ -16,6 +16,8 @@ const createForm = require('../.expo/lobby-tests/features/home/createLobbyForm.j
 const { CreateLobbyFormStore, validateLobbyForm, bishkekDateTimeToInstant } = createForm;
 const chatLogic = require('../.expo/lobby-tests/features/chats/liveLobbyChat.js');
 const { LiveLobbyChatStore } = chatLogic;
+const inboxLogic = require('../.expo/lobby-tests/features/chats/liveChatInbox.js');
+const scrollLogic = require('../.expo/lobby-tests/features/chats/liveChatScroll.js');
 
 const lobby = {
   id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', title: 'demo.pizza', description: 'My own description <not markup>',
@@ -79,6 +81,15 @@ function host(auth) {
       './lobbyDetails': detailsLogic,
       '../chats/LiveLobbyChatScreen': { LiveLobbyChatScreen: 'LiveLobbyChatScreen' },
       './liveLobbyChat': chatLogic,
+      './liveChatInbox': inboxLogic,
+      './liveChatScroll': scrollLogic,
+      'react-native-gesture-handler': { GestureDetector: 'GestureDetector', GestureHandlerRootView: 'GestureHandlerRootView' },
+      '../../components/Screen': { Screen: 'Screen' },
+      '../home/LiveLobbyCard': { LobbyCategoryPlaceholder: 'LobbyCategoryPlaceholder' },
+      '../../navigation/NavScrollContext': { NavScrollContext: { Provider: 'NavScrollContext.Provider' } },
+      './SwipeBackPage': { SwipeBackPage: 'SwipeBackPage' },
+      './LiveChatsScreen': { LiveChatsScreen: 'LiveChatsScreen' },
+      './LiveLobbyChatScreen': { LiveLobbyChatScreen: 'LiveLobbyChatScreen' },
       'expo-modules-core': { uuid: { v4: () => 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb' } },
       './HomeExperienceProvider': { useHomeClock: () => Date.now() },
       '../navigation/NavScrollContext': { NavScrollContext: { value() {} } },
@@ -252,7 +263,7 @@ test('real feed/details never import demo joining, chat storage or conversations
   const home = readFileSync(path.join(__dirname, '../src/screens/HomeScreen.tsx'), 'utf8');
   assert.match(home, /LiveLobbyFeed onSelect=\{setSelectedLobbyId\}/);
   assert.match(home, /LiveLobbyDetails key=\{selectedLobbyId\} id=\{selectedLobbyId\}/);
-  assert.match(home, /lobbies\.demo/);
+  assert.doesNotMatch(home, /lobbies\.demo/);
 });
 
 test('Lobby requests use existing Bearer transport, one refresh retry, and invalidate late responses', async () => {
@@ -418,7 +429,7 @@ test('actual App creation callback navigates Home, reloads both scopes and opens
     ...screenMocks({}),
     '@expo-google-fonts/outfit/600SemiBold':{Outfit_600SemiBold:{}},'expo-font':{useFonts:()=>[true]},
     '../assets':{photos:{}},'../components/icons/PartyIcon':{PartyIcon:'PartyIcon'},
-    '../features/chats/ChatsModal':{ChatsModal:'ChatsModal'},
+    '../features/chats/LiveChatsModal':{LiveChatsModal:'LiveChatsModal'},
     '../features/home/HomeExperienceProvider':{useHomeExperience:()=>({session:{}})},
     '../features/home/LobbyExtroversionIndicator':{LobbyExtroversionIndicator:'LobbyExtroversionIndicator'},
     '../features/home/LobbyCountdown':{LobbyCountdown:'LobbyCountdown'},
@@ -460,7 +471,131 @@ function chatHost(api) {
   const props = { lobbyId: lobby.id, title: lobby.title, onBack() {}, onAccessLost() {} };
   return { auth, h, props, render: () => h.render(LiveLobbyChatScreen, props) };
 }
-const history = tree => byId(tree, 'live-chat-history').props.data;
+// Inverted data is newest first; return visual chronological order to assertions.
+const history = tree => [...byId(tree, 'live-chat-history').props.data].reverse();
+
+const chatRow = (id='chat-a', preview=null) => ({ lobby:{id,title:'Real lobby '+id,category:'SPORT'},activityAt:'2026-01-01T00:00:00.000Z',
+  lastMessage: preview===null ? null : {id:'message-'+id,preview,createdAt:'2026-01-01T00:00:00.000Z',author:{id:'A',displayName:'Real author'}} });
+function mountInbox(api, onClose=()=>{}) {
+  const auth={user:{id:'A'},lobbyApi:api}, h=host(auth), screenHost=host(auth);
+  const {LiveChatsModal}=h.load('src/features/chats/LiveChatsModal.tsx');
+  const {LiveChatsScreen}=screenHost.load('src/features/chats/LiveChatsScreen.tsx');
+  const modal=()=>h.render(LiveChatsModal,{onClose});
+  const listProps=()=>nodes(modal()).find(n=>n.type==='SwipeBackPage'&&n.props.name==='chats').props.children(onClose,{}).props;
+  const screen=()=>screenHost.render(LiveChatsScreen,listProps());
+  const rows=()=>byId(screen(),'inbox-list').props.data;
+  const rowButton=(id)=>byId(screen(),'inbox-list').props.renderItem({item:rows().find(row=>row.lobby.id===id)});
+  const conversation=()=>{
+    const swipe=nodes(modal()).find(n=>n.type==='SwipeBackPage'&&n.props.name==='conversation');
+    return swipe ? nodes(swipe.props.children(swipe.props.onClose,{})).find(n=>n.type==='LiveLobbyChatScreen') : null;
+  };
+  return {auth,h,modal,screen,rows,rowButton,conversation};
+}
+test('real inbox renders loading/empty/error/retry and safe literal rows without demo/unread/group counters',async()=>{
+  let result=deferred(); const c=mountInbox({listChats:()=>result.promise});
+  assert.ok(byId(c.screen(),'inbox-loading')); result.reject(Error('offline'));await flush();
+  assert.ok(byId(c.screen(),'inbox-error'));assert.deepEqual(c.rows(),[]);
+  result=deferred();byId(c.screen(),'inbox-retry').props.onPress();result.resolve(page());await flush();
+  assert.ok(byId(c.screen(),'inbox-empty'));
+  result=deferred();byId(c.screen(),'inbox-refresh').props.onPress();result.resolve(page([chatRow(),chatRow('b','<b>plain 🎉</b>')]));await flush();
+  assert.match(texts(c.rowButton('chat-a')),/Сообщений пока нет/);
+  assert.match(texts(c.rowButton('b')),/Real author: <b>plain 🎉<\/b>/);
+  assert.doesNotMatch(texts(c.screen()),/демо|непрочитан|активные|неактивные/i);
+  assert.equal(nodes(c.rowButton('b')).some(n=>n.type==='Image'||n.type==='ChatStatusDot'),false);
+  assert.equal(nodes(c.rowButton('b')).find(n=>n.type==='LobbyCategoryPlaceholder').props.category,'SPORT');c.h.unmount();
+});
+test('inbox pagination coalesces presses, keeps rows/cursor on failure, retries and deduplicates by lobbyId',async()=>{
+  let next=deferred();const calls=[];
+  const c=mountInbox({listChats:async after=>{calls.push(after);return after?next.promise:page([chatRow()],'cursor');}});
+  c.screen();await flush();const more=()=>byId(byId(c.screen(),'inbox-list').props.ListFooterComponent,'inbox-more');
+  const press=more().props.onPress;press();press();assert.equal(calls.length,2);assert.equal(more().props.disabled,true);
+  next.reject(Error('offline'));await flush();assert.equal(c.rows().length,1);assert.ok(more());
+  next=deferred();byId(c.screen(),'inbox-retry').props.onPress();next.resolve(page([chatRow(),chatRow('b')]));await flush();
+  assert.deepEqual(c.rows().map(r=>r.lobby.id),['chat-a','b']);assert.deepEqual(calls,[undefined,'cursor','cursor']);c.h.unmount();
+});
+test('Home airplane -> real inbox -> conversation -> inbox -> Home, all in one Modal with correct back source',async()=>{
+  const h=host({}),{HomeScreen}=h.load('src/screens/HomeScreen.tsx',{
+    ...personalScreenMocks({}),'@expo-google-fonts/outfit/600SemiBold':{Outfit_600SemiBold:{}},'expo-font':{useFonts:()=>[true]},
+    '../components/icons/PartyIcon':{PartyIcon:'PartyIcon'},'../features/chats/LiveChatsModal':{LiveChatsModal:'LiveChatsModal'},
+    '../features/search/SearchModal':{SearchModal:'SearchModal'},'./PersonalLobbiesScreen':{PersonalLobbiesScreen:'PersonalLobbiesScreen'},
+  });
+  const home=()=>h.render(HomeScreen,{}); assert.equal(byId(home(),'open-chats').props.accessibilityLabel,'Открыть чаты');
+  byId(home(),'open-chats').props.onPress();const route=nodes(home()).find(n=>n.type==='LiveChatsModal');assert.ok(route);
+  const c=mountInbox({listChats:async()=>page([chatRow()])},route.props.onClose);c.screen();await flush();
+  c.rowButton('chat-a').props.onPress();assert.equal(nodes(c.modal()).filter(n=>n.type==='Modal').length,1);
+  const chat=c.conversation();assert.equal(chat.props.lobbyId,'chat-a');assert.equal(chat.props.backLabel,'К чатам');
+  assert.equal(nodes(c.modal()).find(n=>n.type==='SwipeBackPage'&&n.props.name==='chats').props.active,false);
+  const conversationSwipe=nodes(c.modal()).find(n=>n.type==='SwipeBackPage'&&n.props.name==='conversation');assert.equal(conversationSwipe.props.edgeOnly,true);
+  chat.props.onBack();await flush();assert.equal(c.conversation(),null);byId(c.screen(),'inbox-back').props.onPress();
+  assert.equal(nodes(home()).find(n=>n.type==='LiveChatsModal'),undefined);c.h.unmount();h.unmount();
+});
+test('sending refetches inbox preview/order without global invalidation or disturbing a pending conversation',async()=>{
+  const send=deferred();let saved=false,reads=0;
+  const api={listChats:async()=>{reads++;return page(saved?[chatRow('b','saved'),chatRow()]:[chatRow(),chatRow('b')]);},
+    listLobbyMessages:async()=>page(),sendLobbyMessage:async(_id,input)=>{await send.promise;saved=true;return message(input.clientMessageId,input.body);}};
+  const c=mountInbox(api);c.screen();await flush();c.rowButton('b').props.onPress();
+  const child=host(c.auth),{LiveLobbyChatScreen}=child.load('src/features/chats/LiveLobbyChatScreen.tsx');
+  const chat=()=>child.render(LiveLobbyChatScreen,c.conversation().props);chat();await flush();
+  byId(chat(),'live-chat-draft').props.onChangeText('saved');byId(chat(),'live-chat-send').props.onPress();
+  // An independent inbox Refresh while send is pending must not invalidate chat state.
+  const initialReads=reads; c.conversation().props.onSent();await flush();assert.equal(reads,initialReads+1);assert.ok(byId(chat(),'live-chat-sending'));
+  send.resolve();await flush();assert.equal(history(chat()).length,1);assert.deepEqual(c.rows().map(r=>r.lobby.id),['b','chat-a']);
+  assert.equal(c.rows()[0].lastMessage.preview,'saved');c.conversation().props.onBack();await flush();assert.ok(reads>=initialReads+3);
+  child.unmount();c.h.unmount();
+});
+test('membership invalidation and access loss remove unavailable inbox rows; late pages cannot resurrect them',async()=>{
+  const late=deferred();let joined=true;
+  const api={listChats:async after=>after?late.promise:page(joined?[chatRow()]:[],joined?'page':null)};
+  const c=mountInbox(api);c.screen();await flush();
+  byId(byId(c.screen(),'inbox-list').props.ListFooterComponent,'inbox-more').props.onPress();
+  c.rowButton('chat-a').props.onPress();joined=false;c.conversation().props.onAccessLost();
+  assert.deepEqual(c.rows(),[]);await flush();late.resolve(page([chatRow()]));await flush();assert.deepEqual(c.rows(),[]);
+  assert.ok(c.conversation(),'Denied conversation stays visible with its own return/error UI');
+  c.conversation().props.onBack();await flush();joined=true;getLobbyInvalidation(api).invalidate();await flush();assert.equal(c.rows().length,1);
+  joined=false;getLobbyInvalidation(api).invalidate();assert.deepEqual(c.rows(),[]);await flush();assert.deepEqual(c.rows(),[]);c.h.unmount();
+});
+test('inbox drops late reload/page success or failure after newer reload, account/logout or unmount',async()=>{
+  for(const operation of ['read','page'])for(const transition of ['reload','account','logout','unmount'])for(const fail of [false,true]){
+    const late=deferred();let calls=0;
+    const api={listChats:async()=>++calls===1?page([chatRow()],'cursor'):calls===2?late.promise:page([chatRow('new')])};
+    const c=mountInbox(api);c.screen();await flush();
+    if(operation==='read')byId(c.screen(),'inbox-refresh').props.onPress();
+    else byId(byId(c.screen(),'inbox-list').props.ListFooterComponent,'inbox-more').props.onPress();
+    if(transition==='account'){c.auth.user={id:'B'};assert.deepEqual(c.rows(),[]);}
+    if(transition==='logout'){c.auth.user=null;assert.deepEqual(c.rows(),[]);}
+    if(transition==='reload')getLobbyInvalidation(api).invalidate();
+    if(transition==='unmount')c.h.unmount();
+    await flush();if(fail)late.reject(Error('late'));else late.resolve(page([chatRow('old')]));await flush();
+    if(transition!=='unmount'){assert.ok(!c.rows().some(r=>r.lobby.id==='old'));assert.equal(byId(c.screen(),'inbox-error'),undefined);}
+    c.h.unmount();
+  }
+});
+test('ApiClient inbox uses distinct authenticated route, encodes cursor and never substitutes mine',async()=>{
+  const requests=[];const client=creationClient(async(url,options)=>{
+    if(url.endsWith('/auth/login'))return authReply(1);requests.push({url:new URL(url),options});return new Response(JSON.stringify(page([chatRow()])));
+  });
+  await client.login({email:'test@example.test',password:'test-only'});await client.listChats('a/b+=');
+  assert.equal(requests[0].url.pathname,'/api/v1/chats');assert.equal(requests[0].url.searchParams.get('limit'),'20');
+  assert.equal(requests[0].url.searchParams.get('after'),'a/b+=');assert.equal(requests[0].url.searchParams.has('scope'),false);
+  assert.equal(requests[0].options.headers.Authorization,'Bearer access-1');
+});
+test('actual long conversation starts at latest, reveals confirmed send, anchors older pages and does not jump on refresh',async()=>{
+  const messages=Array.from({length:60},(_,i)=>message(String(i).padStart(3,'0'),'Long message '+i));
+  let latest=page(messages.slice(30).reverse(),'older'); const sent=deferred();
+  const c=chatHost({listLobbyMessages:async(_id,before)=>before?page(messages.slice(0,30).reverse()):latest,sendLobbyMessage:()=>sent.promise});
+  const offsets=[];const list=()=>{const props=byId(c.render(),'live-chat-history').props;props.ref.current={scrollToOffset:({offset})=>offsets.push(offset)};return props;};
+  list();await flush();assert.equal(list().inverted,true);assert.equal(list().data[0].id,'059');
+  list().onLayout();list().onContentSizeChange(400,3600);assert.equal(offsets.at(-1),0);
+  list().onScrollBeginDrag();list().onScroll({nativeEvent:{contentOffset:{y:2200}}});
+  byId(list().ListFooterComponent,'live-chat-older').props.onPress();await flush();assert.equal(list().data.length,60);
+  const before=offsets.length;list().onContentSizeChange(400,7200);assert.equal(offsets.length,before,'Appending older inverted rows leaves the exact reading offset unchanged');
+  latest=page([message('060','external')],null);byId(c.render(),'live-chat-refresh').props.onPress();await flush();
+  assert.equal(list().data.length,61,'Refresh retains loaded older history');list().onContentSizeChange(400,7320);
+  assert.equal(offsets.at(-1),2320,'Compensate only new messages at the newest end, not jump to zero');
+  byId(c.render(),'live-chat-draft').props.onChangeText('my confirmed message');byId(c.render(),'live-chat-send').props.onPress();
+  assert.equal(offsets.at(-1),2320,'Pending send is not a delivered message');sent.resolve(message('061','my confirmed message'));await flush();
+  list().onContentSizeChange(400,7440);assert.equal(offsets.at(-1),0);assert.equal(list().data[0].id,'061');c.h.unmount();
+});
 
 test('actual live chat loading/empty/error/retry and manual refresh contain no mock delivery', async () => {
   let response = deferred(), calls = 0;
@@ -483,7 +618,7 @@ test('actual chat paginates before cursor, coalesces clicks and preserves histor
   const calls = []; let pending = deferred();
   const c = chatHost({ listLobbyMessages: async (id, before) => { calls.push([id, before]); return before ? pending.promise : page([message('m3'),message('m2')], 'older'); } });
   c.render(); await flush(); assert.deepEqual(history(c.render()).map(m => m.id), ['m2','m3']);
-  const older = () => byId(byId(c.render(), 'live-chat-history').props.ListHeaderComponent, 'live-chat-older');
+  const older = () => byId(byId(c.render(), 'live-chat-history').props.ListFooterComponent, 'live-chat-older');
   older().props.onPress(); older().props.onPress(); assert.equal(older().props.disabled, true);
   pending.reject(new Error('offline')); await flush();
   assert.deepEqual(history(c.render()).map(m => m.id), ['m2','m3']);
@@ -546,7 +681,7 @@ test('late chat GET/page/send cannot change account, lobby, logged-out or unmoun
     }, sendLobbyMessage: () => late.promise });
     c.render(); await flush();
     if (operation === 'read') byId(c.render(), 'live-chat-refresh').props.onPress();
-    if (operation === 'page') byId(byId(c.render(), 'live-chat-history').props.ListHeaderComponent, 'live-chat-older').props.onPress();
+    if (operation === 'page') byId(byId(c.render(), 'live-chat-history').props.ListFooterComponent, 'live-chat-older').props.onPress();
     if (operation === 'send') { byId(c.render(), 'live-chat-draft').props.onChangeText('late'); byId(c.render(), 'live-chat-send').props.onPress(); }
     if (transition === 'account') c.auth.user = { id: 'B' };
     if (transition === 'lobby') c.props.lobbyId = 'other';
@@ -579,7 +714,7 @@ test('membership invalidation immediately hides chat, rechecks access and invali
   const oldPage = deferred(), oldSend = deferred(); let reads = 0;
   const c = chatHost({ listLobbyMessages: async (_id, before) => { if (before) return oldPage.promise; if (++reads > 1) throw chatError(403); return page([message()], 'older'); }, sendLobbyMessage: () => oldSend.promise });
   c.render(); await flush(); byId(c.render(), 'live-chat-draft').props.onChangeText('old'); byId(c.render(), 'live-chat-send').props.onPress();
-  byId(byId(c.render(), 'live-chat-history').props.ListHeaderComponent, 'live-chat-older').props.onPress();
+  byId(byId(c.render(), 'live-chat-history').props.ListFooterComponent, 'live-chat-older').props.onPress();
   getLobbyInvalidation(c.auth.lobbyApi).invalidate(); assert.deepEqual(history(c.render()), []);
   await flush(); oldPage.resolve(page([message('old')])); oldSend.resolve(message('old-send')); await flush();
   assert.deepEqual(history(c.render()), []); assert.ok(byId(c.render(), 'live-chat-error')); c.h.unmount();
@@ -651,7 +786,7 @@ test('Home <-> personal transitions expand nav even when the destination cannot 
     '../navigation/NavScrollContext':{NavScrollContext:{value(value){compact=value;resets.push(value);}}},
     '@expo-google-fonts/outfit/600SemiBold':{Outfit_600SemiBold:{}},'expo-font':{useFonts:()=>[true]},
     '../components/icons/PartyIcon':{PartyIcon:'PartyIcon'},
-    '../features/chats/ChatsModal':{ChatsModal:'ChatsModal'},'../features/search/SearchModal':{SearchModal:'SearchModal'},
+    '../features/chats/LiveChatsModal':{LiveChatsModal:'LiveChatsModal'},'../features/search/SearchModal':{SearchModal:'SearchModal'},
     './PersonalLobbiesScreen':{PersonalLobbiesScreen:'PersonalLobbiesScreen'},
   });
   const render=()=>h.render(HomeScreen,{});
@@ -1028,7 +1163,7 @@ test('Home View all opens real personal route and personal cards open LiveLobbyD
     ...personalScreenMocks({}),
     '@expo-google-fonts/outfit/600SemiBold':{Outfit_600SemiBold:{}},'expo-font':{useFonts:()=>[true]},
     '../components/icons/PartyIcon':{PartyIcon:'PartyIcon'},
-    '../features/chats/ChatsModal':{ChatsModal:'ChatsModal'},
+    '../features/chats/LiveChatsModal':{LiveChatsModal:'LiveChatsModal'},
     '../features/search/SearchModal':{SearchModal:'SearchModal'},
     './PersonalLobbiesScreen':{PersonalLobbiesScreen:'PersonalLobbiesScreen'},
   });

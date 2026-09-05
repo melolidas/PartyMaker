@@ -4,7 +4,7 @@ import { Outfit_600SemiBold } from '@expo-google-fonts/outfit/600SemiBold';
 import { useFonts } from 'expo-font';
 import { Screen } from '../components/Screen';
 import { PartyIcon } from '../components/icons/PartyIcon';
-import { ChatsModal } from '../features/chats/ChatsModal';
+import { LiveChatsModal } from '../features/chats/LiveChatsModal';
 import { LiveLobbyFeed } from '../features/home/LiveLobbyFeed';
 import { LiveLobbyDetails } from '../features/home/LiveLobbyDetails';
 import { PersonalLobbiesScreen } from './PersonalLobbiesScreen';
@@ -57,7 +57,7 @@ export function HomeScreen({ initialLobbyId = null, onInitialLobbyConsumed, onCr
           <Pressable
             testID="open-chats"
             accessibilityRole="button"
-            accessibilityLabel={`${t('chats.open')} · ${t('lobbies.demo')}`}
+            accessibilityLabel={t('chats.open')}
             onPress={() => setChatsOpen(true)}
             style={({ pressed }) => [styles.chatButton, pressed && styles.pressed]}
           >
@@ -65,13 +65,12 @@ export function HomeScreen({ initialLobbyId = null, onInitialLobbyConsumed, onCr
           </Pressable>
         </View>
 
-        <Text style={styles.cardMeta}>{t('lobbies.demoTools')}</Text>
         <LiveLobbyFeed onSelect={setSelectedLobbyId} />
         <LiveLobbyFeed scope="mine" compact onSelect={setSelectedLobbyId} onViewAll={() => showPersonal(true)} onCreate={onCreate} />
 
       </Screen>
       {selectedLobbyId ? <LiveLobbyDetails key={selectedLobbyId} id={selectedLobbyId} onClose={() => setSelectedLobbyId(null)} /> : null}
-      {chatsOpen ? <ChatsModal onClose={() => setChatsOpen(false)} /> : null}
+      {chatsOpen ? <LiveChatsModal onClose={() => setChatsOpen(false)} /> : null}
       {searchOpen ? <SearchModal onClose={() => setSearchOpen(false)} /> : null}
     </>
   );

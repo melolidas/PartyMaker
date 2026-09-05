@@ -7,10 +7,11 @@ export type LiveChatState = {
   account: string | null; lobbyId: string; items: LobbyMessage[]; nextCursor: string | null;
   loading: boolean; loadingOlder: boolean; loaded: boolean; error: TranslationKey | null;
   blocked: boolean; draft: string; sending: boolean; pending: PendingSend | null; sendError: TranslationKey | null;
+  confirmedSends: number;
 };
 export const emptyLiveChat = (account: string | null, lobbyId: string): LiveChatState => ({
   account, lobbyId, items: [], nextCursor: null, loading: !!account, loadingOlder: false, loaded: false,
-  error: null, blocked: false, draft: '', sending: false, pending: null, sendError: null,
+  error: null, blocked: false, draft: '', sending: false, pending: null, sendError: null, confirmedSends: 0,
 });
 export function validMessageBody(draft: string): boolean {
   const body = draft.trim();
@@ -34,7 +35,7 @@ export class LiveLobbyChatStore {
   // Confirmed sends are retained across older GET snapshots and latest-page refreshes.
   private confirmed = new Map<string, LobbyMessage>();
   private listeners = new Set<() => void>();
-  constructor(private readonly api: LobbyChatApi, private readonly uuid: () => string, private readonly accessLost: () => void = () => {}) {}
+  constructor(private readonly api: LobbyChatApi, private readonly uuid: () => string, private readonly accessLost: () => void = () => {}, private readonly sent: () => void = () => {}) {}
   getSnapshot = (): LiveChatState => this.state;
   subscribe = (listener: () => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; };
   private publish(state: LiveChatState) { this.state = state; this.listeners.forEach(listener => listener()); }
@@ -67,7 +68,8 @@ export class LiveLobbyChatStore {
     try {
       const page = await this.api.listLobbyMessages(id);
       if (read !== this.read || context !== this.context) return;
-      this.publish({ ...this.state, items: ordered(page.items, [...this.confirmed.values()]), nextCursor: page.nextCursor,
+      // Retain loaded history while refreshing latest, so the reader's anchor survives.
+      this.publish({ ...this.state, items: ordered(this.state.items, page.items, [...this.confirmed.values()]), nextCursor: page.nextCursor,
         loading: false, loaded: true });
     } catch (error: unknown) {
       if (read !== this.read || context !== this.context || this.deny(error)) return;
@@ -115,8 +117,9 @@ export class LiveLobbyChatStore {
       const message = await this.api.sendLobbyMessage(lobbyId, pending.input);
       if (context !== this.context) return;
       this.confirmed.set(message.id, message);
-      this.publish({ ...this.state, items: ordered(this.state.items, [message]), pending: null, sending: false,
+      this.publish({ ...this.state, items: ordered(this.state.items, [message]), pending: null, sending: false, confirmedSends: this.state.confirmedSends + 1,
         draft: this.draftRevision === pending.draftRevision ? '' : this.state.draft });
+      this.sent();
     } catch (error: unknown) {
       if (context !== this.context || this.deny(error)) return;
       const sendError: TranslationKey = error instanceof ApiClientError && error.code === 'MESSAGE_ID_CONFLICT' ? 'liveChat.conflict'

@@ -109,7 +109,7 @@ The shared `configureApp` applies the same policy in tests and production bootst
 
 `npm run test:cors` runs the CORS/configuration checks without PostgreSQL or `.env`. The same tests also run in `npm test`, alongside the database-backed Auth/Profile suite.
 
-On web, refresh tokens remain **memory-only**; reloading the page requires explicit sign-in. There is no cookie or localStorage session persistence. Profile changes, newly created lobbies and text messages persist in PostgreSQL. Home and Search load real upcoming lobbies, personal memberships and details with working join/leave and JOINED-only text chat. Editing/deleting lobbies, the general live chat list, Moments, Activity/Notifications and Media APIs remain unimplemented; existing demo sections stay separate and labeled.
+On web, refresh tokens remain **memory-only**; reloading the page requires explicit sign-in. There is no cookie or localStorage session persistence. Profile changes, newly created lobbies and text messages persist in PostgreSQL. Home and Search load real upcoming lobbies, personal memberships and details with working join/leave. The paper-plane inbox loads available JOINED chats, including past PUBLISHED events. Editing/deleting lobbies, Moments, Activity/Notifications and Media APIs remain unimplemented; existing demo sections stay separate and labeled.
 
 ## Auth and profile API
 
@@ -219,7 +219,25 @@ POST uses the same Lobby `FOR UPDATE` row lock and ReadCommitted transaction as 
 
 `npm test` includes real PostgreSQL read/send, privacy, validation, deleted-history, tuple-pagination and idempotency tests. Concurrent send/replay and send/leave tests observe both HTTP transactions waiting on actual PostgreSQL locks, not sequential mocks. Fixtures are isolated and deleted only by their known ids.
 
-Expo displays chronological history, older-page loading, manual latest Refresh, confirmed sends and explicit same-id retries. No polling, general live inbox, notifications, attachments, reactions, read receipts, typing, message edit/delete, member list or WebSocket. The general Chats UI remains explicitly demo-only.
+Expo displays chronological history, older-page loading with a retained reading position, manual latest Refresh, confirmed sends and explicit same-id retries. Initial opening and a confirmed own send show the newest end; Refresh retains loaded history without forcing a reader of older messages down. No polling, notifications, attachments, reactions, read receipts, typing, message edit/delete, member list or WebSocket.
+
+## Available chat inbox
+
+`GET /api/v1/chats?limit=20&after=<opaque-cursor>` requires the existing Bearer guard. It returns only PUBLISHED lobbies with a JOINED membership for the authenticated user, including already-started events. Organizer access is through that membership, not organizerId. LEFT/REMOVED, outsiders and non-PUBLISHED events are excluded before pagination. No userId/scope selector is accepted; `/lobbies?scope=mine` remains upcoming-only.
+
+Response: `{ items, nextCursor }`. Each item contains only:
+
+- `lobby: { id, title, category }`;
+- `lastMessage: null | { id, preview, createdAt, author: { id, displayName } }`;
+- `activityAt`: latest undeleted message createdAt, or Lobby.createdAt if there are no undeleted messages.
+
+Latest-message order is `createdAt DESC, id DESC`; inbox order is `activityAt DESC, lobbyId DESC`. The preview is the first 160 Unicode code points of plain text (not HTML); no full history, email, auth fields or media storage keys. The query uses parameterized Prisma SQL with a LATERAL latest-message projection over the existing index, membership filtering, tuple cursor and limit+1 in **one PostgreSQL statement/snapshot**. There are no per-row history calls, JS sorting of all lobbies, duplicated lastMessage/activity columns, Chat table or migration.
+
+Limit is an integer 1–50, default 20. Cursor encodes canonical UTC activityAt (four-digit AD year 0001–9999) and lobbyId UUID. Invalid parameters/cursors, arrays, objects and unknown query fields return **400 VALIDATION_FAILED** in the common error format. Cursor never substitutes for the JOINED filter. Pages are **not a frozen snapshot**: new messages may raise a chat above an already-passed cursor. Manual Refresh/reopening returns the current order; the UI deduplicates lobby ids.
+
+The real paper-plane inbox and LiveLobbyChatScreen share one native Modal and source-aware Back labels. Confirmed sends/return refetch previews, and join/leave invalidates available chats. Inbox refresh does not reset a pending send. A detected conversation 403/404 blocks history/sending, removes the inaccessible row and refreshes available chats. Read/page errors have explicit retry; there is no demo fallback, total/unread counter, fabricated grouping, realtime, polling, chat search or COMPLETED/CANCELLED archive.
+
+`npm test` includes real PostgreSQL inbox access, past/future membership, empty/deleted history, Unicode preview/privacy, same-timestamp pagination and activity-after-send checks. See the root README for the two-user browser scenario and 75-message scroll/anchor smoke test. Clean up only isolated fixture ids; never reset or reseed the existing database.
 
 ## Error response
 
@@ -238,4 +256,4 @@ Every API error is normalized to this shape:
 }
 ```
 
-Health, Auth, Profile, Lobby creation, catalog/details, join/leave and per-lobby text messages are implemented. Other Lobby mutations, general live chat list, moments, notifications and media APIs remain outside this stage; demo frontend records are kept separate from real lobbies.
+Health, Auth, Profile, Lobby creation, catalog/details, join/leave, per-lobby text messages and the available-chat inbox are implemented. Other Lobby mutations, moments, notifications and media APIs remain outside this stage; demo frontend records are kept separate from real lobbies.

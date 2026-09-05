@@ -1,6 +1,6 @@
 import { getApiBaseUrl } from './config';
 import { getLobbyInvalidation } from './lobbyInvalidation';
-import type { CreateLobbyInput, Lobby, LobbyPage, LobbyScope, LobbyMessage, LobbyMessagePage, SendLobbyMessageInput } from './lobbyTypes';
+import type { CreateLobbyInput, Lobby, LobbyPage, LobbyScope, LobbyMessage, LobbyMessagePage, SendLobbyMessageInput, ChatPage } from './lobbyTypes';
 import {
   ApiClientError,
   createApiConfigurationError,
@@ -184,6 +184,11 @@ export class ApiClient {
   listLobbyMessages(id: string, before?: string): Promise<LobbyMessagePage> {
     const query = before === undefined ? '' : `&before=${encodeURIComponent(before)}`;
     return this.protectedRequest<LobbyMessagePage>(`/lobbies/${encodeURIComponent(id)}/messages?limit=30${query}`, { method: 'GET' });
+  }
+
+  listChats(after?: string): Promise<ChatPage> {
+    const query = after === undefined ? '' : `&after=${encodeURIComponent(after)}`;
+    return this.protectedRequest<ChatPage>(`/chats?limit=20${query}`, { method: 'GET' });
   }
 
   sendLobbyMessage(id: string, input: SendLobbyMessageInput): Promise<LobbyMessage> {

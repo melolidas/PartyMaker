@@ -1,9 +1,14 @@
 import { AppLanguage } from './language';
 
 const en = {
+  'inbox.empty': 'No available chats. Create or join a lobby to start a conversation.',
+  'inbox.noMessages': 'No messages yet',
+  'inbox.error': 'Could not load chats. Check your connection and retry.',
+  'inbox.pageError': 'Could not load more chats. Loaded chats are preserved.',
+  'liveChat.backToChats': 'To chats',
   'liveChat.open': 'Open lobby chat',
   'liveChat.joinFirst': 'Chat is available to joined participants only',
-  'liveChat.back': 'Back to lobby',
+  'liveChat.back': 'To lobby',
   'liveChat.manual': 'Text chat · refresh manually to see new messages',
   'liveChat.empty': 'No messages yet. Start the conversation.',
   'liveChat.older': 'Load earlier messages',
@@ -300,9 +305,14 @@ export type TranslationKey = keyof typeof en;
 export type Translator = (key: TranslationKey) => string;
 
 const ru = {
+  'inbox.empty': 'Доступных чатов пока нет. Создайте лобби или вступите, чтобы начать общение.',
+  'inbox.noMessages': 'Сообщений пока нет',
+  'inbox.error': 'Не удалось загрузить чаты. Проверьте соединение и повторите.',
+  'inbox.pageError': 'Не удалось загрузить ещё чаты. Загруженные чаты сохранены.',
+  'liveChat.backToChats': 'К чатам',
   'liveChat.open': 'Открыть чат лобби',
   'liveChat.joinFirst': 'Чат доступен только вступившим участникам',
-  'liveChat.back': 'Назад к лобби',
+  'liveChat.back': 'К лобби',
   'liveChat.manual': 'Текстовый чат · обновляйте вручную для новых сообщений',
   'liveChat.empty': 'Сообщений пока нет. Начните общение.',
   'liveChat.older': 'Загрузить ранние сообщения',

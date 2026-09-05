@@ -27,11 +27,18 @@ export type LobbyMessage = {
 };
 export type LobbyMessagePage = { items: LobbyMessage[]; nextCursor: string | null };
 export type SendLobbyMessageInput = { clientMessageId: string; body: string };
+export type ChatSummary = {
+  lobby: Pick<Lobby, 'id' | 'title' | 'category'>;
+  lastMessage: null | { id: string; preview: string; createdAt: string; author: { id: string; displayName: string } };
+  activityAt: string;
+};
+export type ChatPage = { items: ChatSummary[]; nextCursor: string | null };
 export type LobbyChatApi = {
   listLobbyMessages: (id: string, before?: string) => Promise<LobbyMessagePage>;
   sendLobbyMessage: (id: string, input: SendLobbyMessageInput) => Promise<LobbyMessage>;
 };
 export type LobbyApi = LobbyReadApi & LobbyChatApi & {
+  listChats: (after?: string) => Promise<ChatPage>;
   createLobby: (input: CreateLobbyInput) => Promise<Lobby>;
   joinLobby: (id: string) => Promise<Lobby>;
   leaveLobby: (id: string) => Promise<Lobby>;

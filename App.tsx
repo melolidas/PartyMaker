@@ -47,6 +47,13 @@ function PartyMaker() {
   const [route, setRoute] = useState<RouteName>('home');
   const [previousRoute, setPreviousRoute] = useState<RouteName>('home');
   const [navCompact, setNavCompact] = useState(false);
+  const [createdLobbyId, setCreatedLobbyId] = useState<string | null>(null);
+  const handleCreated = useCallback((id: string) => {
+    setCreatedLobbyId(id);
+    setNavCompact(false);
+    setRoute('home');
+  }, []);
+  const consumeCreatedLobby = useCallback(() => setCreatedLobbyId(null), []);
 
   const navigate = useCallback((next: RouteName) => {
     if (next === route) return;
@@ -62,15 +69,16 @@ function PartyMaker() {
       case 'moments':
         return <MomentsScreen />;
       case 'create':
-        return <CreateLobbyScreen onClose={() => navigate(previousRoute)} />;
+        return <CreateLobbyScreen onClose={() => navigate(previousRoute)} onCreated={handleCreated} />;
       case 'activity':
         return <ActivityScreen />;
       case 'profile':
         return <ProfileScreen />;
       default:
-        return <HomeScreen />;
+        // Home mounts fresh after Create, so its feed reloads in server order.
+        return <HomeScreen initialLobbyId={createdLobbyId} onInitialLobbyConsumed={consumeCreatedLobby} />;
     }
-  }, [navigate, previousRoute, route]);
+  }, [navigate, previousRoute, route, createdLobbyId, handleCreated, consumeCreatedLobby]);
 
   return (
     <NavScrollContext.Provider value={setNavCompact}>

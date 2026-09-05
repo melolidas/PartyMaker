@@ -13,7 +13,7 @@ npm start
 
 Scan the QR code with Expo Go or press `a` to open an Android emulator.
 
-## Auth/Profile and read-only Lobby integration
+## Auth/Profile and Lobby integration
 
 Start the local NestJS backend separately using [the backend setup instructions](backend/README.md). Set `EXPO_PUBLIC_API_BASE_URL` in the shell or in your local `.env` (copy `.env.example` only if `.env` does not already exist). The value is public Expo configuration, must be an absolute HTTP(S) URL, and must end in `/api/v1`. Never put `JWT_ACCESS_SECRET`, `DATABASE_URL`, passwords, or other backend secrets in the Expo environment.
 
@@ -34,6 +34,7 @@ The frontend now uses these backend endpoints through one typed API client:
 - `PUT /users/me/extroversion`
 - `GET /lobbies?limit=20&after=<opaque-cursor>`
 - `GET /lobbies/:id`
+- `POST /lobbies`
 
 The access token exists only in application memory. On iOS and Android, the refresh token is stored with Expo SecureStore. On web, the refresh token is intentionally kept in memory and is never written to `localStorage`, so a browser-page refresh requires signing in again.
 
@@ -53,7 +54,7 @@ If reconciliation temporarily fails, use **Retry recovery / Повторить �
 
 **Restart limitation:** a timeout is an in-memory safety boundary, not proof of durable invalidation. Pending/unknown persistent records are not restored, and a new runtime never clears them merely because its WeakMap is empty. However, if a delayed `committed` write physically completes while revocation/tombstone writes are unavailable, a new runtime can observe matching committed credentials. Without confirmed durable cleanup (or confirmed server revocation), absence of session restoration after restart cannot be guaranteed. The regression suite explicitly covers this limit. If the process dies with an unresolved pending writer and no terminal proof, recovery cannot safely unlock it automatically. No extra markers are added to claim a stronger guarantee.
 
-Profile name, bio, city, country code, and extroversion level are backed by `/users/me`. Home's upcoming catalog and lobby details use PostgreSQL through the same authenticated ApiClient. Avatar, gallery, stats, demo memberships, Search, Chat, Moments, Activity and Create Lobby remain explicitly labeled demos. Real lobby creation, joining, chat and Media are not implemented.
+Profile name, bio, city, country code, and extroversion level are backed by `/users/me`. Home's upcoming catalog, lobby details and Create Lobby use PostgreSQL through the same authenticated ApiClient. Avatar, gallery, stats, demo memberships, Search, Chat, Moments and Activity remain explicitly labeled demos. Real joining/leaving, chat, editing/deleting lobbies and Media are not implemented.
 
 ### Run Auth/Profile in Expo Web
 
@@ -85,7 +86,7 @@ Backend CORS defaults to no cross-origin permission. `CORS_ALLOWED_ORIGINS` acce
 - Chats with active and archived lobby rows, opened using the paper-plane button on Home
 - Mock lobby conversations with sample messages and a working local composer
 - Moments social feed
-- Create Lobby form
+- Create Lobby: real form and atomic PostgreSQL creation with organizer membership
 - Activity notifications
 - Profile and photo gallery
 
@@ -114,7 +115,19 @@ Cursor pages are not a database snapshot: events may start or be edited between 
 
 For browser smoke testing, sign in at the Expo Web URL above, check the real list and details, then the empty state with no future published fixtures. Temporarily stop only the local API, press Refresh to see an error, restart it and press Retry. The separate demo section should remain labeled and never replace the real list.
 
+## Create a real lobby
+
+Use the central + button. Enter title, description, category, date (`YYYY-MM-DD`), 24-hour time (`HH:MM`), capacity and meeting format. In-person events require a venue name; online events send `venueName: null`. The form explicitly uses **Asia/Bishkek (UTC+06:00)**, not the device/computer timezone. It checks the calendar and round-trips the named timezone, rejecting impossible dates such as February 30 rather than normalizing them. Photos, maps and geocoding are visibly unavailable; no demo photo is preselected.
+
+Submission uses the existing ApiClient/session and a synchronous double-submit lock. The server atomically creates a PUBLISHED lobby and one ORGANIZER/JOINED membership for the authenticated user. You occupy one capacity slot. A confirmed 201 returns to Home, reloads the server-sorted catalog and opens details by the returned id—even if that event is beyond the first page. The real id never enters demo membership or conversations.
+
+Errors preserve the draft while the form stays mounted. An ambiguous network/server/response error warns that creation might already have committed: **check Home before manually submitting again**. There is no automatic POST retry for those errors and no idempotency key in this stage; a deliberate repeated request can create a duplicate. The existing bounded refresh/retry after an explicit `401 INVALID_ACCESS_TOKEN` remains enabled. Closing the form discards its local draft. Logout/account switch/unmount invalidates late UI callbacks; the server may already have created the old account's lobby, but its late response cannot navigate or populate the new account's UI.
+
+For browser smoke testing, create a uniquely named test lobby, verify Home → details and the organizer's `1 / capacity` count, then sign out/in and open it again from the catalog. Use only isolated test users/records and clean up by their known ids; no database reset or full reseed is required. Page reload still requires sign-in on web (refresh token is memory-only).
+
 ## Home demo tools
+
+The demo membership section is not the list of lobbies created through the API. Real created lobbies appear in the upcoming catalog according to server sorting, with a real JOINED membership badge.
 
 Only demo cards retain localized sample schedules/distances and a countdown relative to app launch. These are separate from real event timestamps.
 

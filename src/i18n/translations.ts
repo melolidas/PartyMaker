@@ -1,6 +1,20 @@
 import { AppLanguage } from './language';
 
 const en = {
+  'create.mediaUnavailable': 'Photos, maps and geocoding are not available yet.',
+  'create.format': 'Meeting format',
+  'create.offline': 'In person',
+  'create.venue': 'Venue name',
+  'create.date': 'Date (YYYY-MM-DD)',
+  'create.timeZone': 'Time zone',
+  'create.organizerPlace': 'At least 2 places. You occupy one place as organizer.',
+  'create.error.title': 'Enter a title from 1 to 40 characters.',
+  'create.error.description': 'Enter a description from 1 to 200 characters.',
+  'create.error.category': 'Choose a category from the list.',
+  'create.error.schedule': 'Enter a real future date and time in Asia/Bishkek: YYYY-MM-DD and HH:MM (24-hour).',
+  'create.error.capacity': 'Capacity must be a whole number from 2 to 2147483647.',
+  'create.error.venue': 'Enter a venue name from 1 to 140 characters for an in-person meeting.',
+  'create.error.unconfirmed': 'Creation was not confirmed. The server may already have saved the lobby. Check Home before submitting again; no automatic retry was made.',
   'category.outdoors': 'Outdoors',
   'lobbies.upcoming': 'Upcoming lobbies',
   'lobbies.loading': 'Loading lobbies…',
@@ -256,6 +270,20 @@ export type TranslationKey = keyof typeof en;
 export type Translator = (key: TranslationKey) => string;
 
 const ru = {
+  'create.mediaUnavailable': 'Фото, карты и геокодинг пока недоступны.',
+  'create.format': 'Формат встречи',
+  'create.offline': 'Очно',
+  'create.venue': 'Название места',
+  'create.date': 'Дата (ГГГГ-ММ-ДД)',
+  'create.timeZone': 'Часовой пояс',
+  'create.organizerPlace': 'Минимум 2 места. Одно место занимаешь ты — организатор.',
+  'create.error.title': 'Укажи название длиной от 1 до 40 символов.',
+  'create.error.description': 'Укажи описание длиной от 1 до 200 символов.',
+  'create.error.category': 'Выбери категорию из списка.',
+  'create.error.schedule': 'Укажи существующие будущие дату и время в Asia/Bishkek: ГГГГ-ММ-ДД и ЧЧ:ММ (24 часа).',
+  'create.error.capacity': 'Вместимость должна быть целым числом от 2 до 2147483647.',
+  'create.error.venue': 'Для очной встречи укажи название места длиной от 1 до 140 символов.',
+  'create.error.unconfirmed': 'Создание не подтверждено. Сервер мог уже сохранить лобби. Проверь главную перед повторной отправкой; автоматического повтора не было.',
   'category.outdoors': 'На природе',
   'lobbies.upcoming': 'Предстоящие лобби',
   'lobbies.loading': 'Загружаем лобби…',

@@ -10,6 +10,8 @@ import { AuthTokenService } from '../src/auth/auth-token.service';
 import { configureApp, configureSwagger } from '../src/bootstrap';
 import type { LobbyPageResponseDto, LobbyResponseDto } from '../src/lobbies/dto/lobby-response.dto';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { LobbiesService } from '../src/lobbies/lobbies.service';
+import type { CreateLobbyRequestDto } from '../src/lobbies/dto/create-lobby-request.dto';
 
 let app: INestApplication;
 let prisma: PrismaService;
@@ -63,7 +65,7 @@ before(async () => {
 after(async () => {
   if (prisma) {
     // Only this run's freshly-created ids; no reseeding or changes to existing data.
-    await prisma.lobby.deleteMany({ where: { id: { in: ids } } });
+    await prisma.lobby.deleteMany({ where: { OR: [{ id: { in: ids } }, { organizerId: { in: users } }] } });
     await prisma.mediaAsset.deleteMany({ where: { id: mediaId } });
     await prisma.user.deleteMany({ where: { id: { in: users } } });
   }
@@ -167,4 +169,115 @@ test('Swagger documents safe Lobby DTOs, pagination and Bearer protection', asyn
   assert.equal(parameters.find((parameter) => parameter.name === 'after')?.schema.type, 'string');
   assert.ok(response.body.paths['/api/v1/lobbies/{id}'].get.responses['404']);
   assert.ok(response.body.components.schemas.LobbyPageResponseDto);
+  assert.ok(response.body.paths['/api/v1/lobbies'].post.security);
+  assert.ok(response.body.paths['/api/v1/lobbies'].post.responses['201']);
+  assert.ok(response.body.components.schemas.CreateLobbyRequestDto.required.includes('venueName'));
+});
+
+const createInput = (): CreateLobbyRequestDto => ({
+  title: `Create ${randomUUID().slice(0, 12)}`, description: 'A real user description.',
+  category: 'FOOD', startsAt: '2201-01-01T13:00:00.000Z', timeZone: 'Asia/Bishkek',
+  capacity: 6, isOnline: false, venueName: 'Test venue',
+});
+const post = (input: unknown) => request(app.getHttpServer()).post('/api/v1/lobbies').auth(access, { type: 'bearer' }).send(input as object);
+
+test('unsupported cursor years return VALIDATION_FAILED before Prisma and preserve normal tuple pages', async () => {
+  const forbiddenPrisma = new LobbiesService({ lobby: { findMany: () => assert.fail('Invalid cursor reached Prisma') } } as unknown as PrismaService);
+  for (const startsAt of ['+275760-09-13T00:00:00.000Z', '+010000-01-01T00:00:00.000Z', '-000001-01-01T00:00:00.000Z', '0000-01-01T00:00:00.000Z', '2030-02-30T00:00:00.000Z']) {
+    const after = Buffer.from(JSON.stringify({ startsAt, id: '00000000-0000-4000-8000-000000000000' })).toString('base64url');
+    const response = await request(app.getHttpServer()).get('/api/v1/lobbies').query({ after }).auth(access, { type: 'bearer' }).expect(400);
+    assert.equal(response.body.error.code, 'VALIDATION_FAILED');
+    await assert.rejects(forbiddenPrisma.list({ limit: 20, after }, users[0]!), { status: 400 });
+  }
+});
+
+test('POST requires Bearer authentication', async () => {
+  const response = await request(app.getHttpServer()).post('/api/v1/lobbies').send(createInput()).expect(401);
+  assert.equal(response.body.error.code, 'INVALID_ACCESS_TOKEN');
+});
+
+test('creation trims fields, publishes a safe DTO and creates exactly one ORGANIZER/JOINED membership', async () => {
+  const input = createInput();
+  const response = await post({ ...input, title: `  ${input.title}  `, description: '  User text  ', venueName: '  Test venue  ' }).expect(201);
+  const dto = response.body as LobbyResponseDto;
+  assert.equal(dto.title, input.title); assert.equal(dto.description, 'User text'); assert.equal(dto.venueName, 'Test venue');
+  assert.equal(dto.joinedCount, 1); assert.equal(dto.isJoined, true); assert.equal(dto.groupExtroversionLevel, 1);
+  assert.deepEqual(Object.keys(dto).sort(), ['id', 'title', 'description', 'category', 'startsAt', 'timeZone', 'isOnline', 'venueName', 'capacity', 'joinedCount', 'isJoined', 'groupExtroversionLevel'].sort());
+  assert.doesNotMatch(JSON.stringify(dto), /passwordHash|tokenHash|refreshToken|storageKey|@example\.test/);
+  const row = await prisma.lobby.findUniqueOrThrow({ where: { id: dto.id }, include: { members: true } });
+  assert.equal(row.organizerId, users[0]); assert.equal(row.status, 'PUBLISHED'); assert.equal(row.minParticipants, 2);
+  assert.equal(row.members.length, 1); assert.equal(row.members[0]?.userId, users[0]);
+  assert.equal(row.members[0]?.role, 'ORGANIZER'); assert.equal(row.members[0]?.status, 'JOINED');
+  const details = await request(app.getHttpServer()).get(`/api/v1/lobbies/${dto.id}`).auth(access, { type: 'bearer' }).expect(200);
+  assert.deepEqual(details.body, dto);
+  const after = Buffer.from(JSON.stringify({ startsAt: '2201-01-01T12:59:59.999Z', id: randomUUID() })).toString('base64url');
+  const catalog = await request(app.getHttpServer()).get('/api/v1/lobbies').query({ after }).auth(access, { type: 'bearer' }).expect(200);
+  assert.ok((catalog.body as LobbyPageResponseDto).items.some(item => item.id === dto.id));
+});
+
+test('nested membership failure rolls back the lobby insert in PostgreSQL', async () => {
+  const input = createInput(); let reachedNestedWrite = false;
+  const failing = prisma.$extends({ query: { lobby: { create: async ({ args, query }) => {
+    assert.ok(args.data.members?.create, 'Production create must include membership in the atomic write');
+    reachedNestedWrite = true;
+    // Force a real FK failure in the child write, while the organizer FK is valid.
+    return query({ ...args, data: { ...args.data, members: { create: { userId: randomUUID(), role: 'ORGANIZER', status: 'JOINED' } } } });
+  } } } });
+  await assert.rejects(new LobbiesService(failing as unknown as PrismaService).create(input, users[0]!), { code: 'P2003' });
+  assert.equal(reachedNestedWrite, true);
+  assert.equal(await prisma.lobby.count({ where: { organizerId: users[0], title: input.title } }), 0);
+});
+
+test('creation rejects empty/long/non-string fields, invalid category and out-of-range integer capacity', async () => {
+  for (const invalid of [
+    { title: '' }, { title: '   ' }, { title: 'x'.repeat(41) }, { title: null }, { title: 5 },
+    { description: '' }, { description: ' \n ' }, { description: 'x'.repeat(201) }, { description: null },
+    { category: 'pizza' }, { category: null }, { capacity: 1 }, { capacity: 0 }, { capacity: -2 },
+    { capacity: 2.5 }, { capacity: 2147483648 }, { capacity: '6' }, { capacity: null },
+  ]) {
+    const response = await post({ ...createInput(), ...invalid }).expect(400);
+    assert.equal(response.body.error.code, 'VALIDATION_FAILED');
+  }
+  await post({ ...createInput(), title: '😀'.repeat(40), description: 'x'.repeat(200), capacity: 2147483647 }).expect(201);
+});
+
+test('creation rejects past/invalid/extended instants and non-IANA zones, accepts explicit offsets', async () => {
+  for (const invalid of [
+    { startsAt: '2000-01-01T00:00:00.000Z' }, { startsAt: 'tomorrow' }, { startsAt: null },
+    { startsAt: '2030-02-30T00:00:00.000Z' }, { startsAt: '2030-01-01T24:00:00.000Z' },
+    { startsAt: '2030-01-01T12:00:00' }, { startsAt: '2030-01-01' }, { startsAt: '+275760-09-13T00:00:00.000Z' },
+    { timeZone: 'Mars/Olympus' }, { timeZone: '+06:00' }, { timeZone: '' }, { timeZone: null },
+  ]) {
+    const response = await post({ ...createInput(), ...invalid }).expect(400);
+    assert.equal(response.body.error.code, 'VALIDATION_FAILED');
+  }
+  const response = await post({ ...createInput(), startsAt: '2201-01-01T19:00:00+06:00', timeZone: 'Europe/Berlin' }).expect(201);
+  assert.equal(response.body.startsAt, '2201-01-01T13:00:00.000Z');
+});
+
+test('venueName is required, null online and trimmed nonempty offline; isOnline is strictly boolean', async () => {
+  for (const invalid of [
+    { venueName: null }, { venueName: '' }, { venueName: '  ' }, { venueName: 'x'.repeat(141) }, { venueName: 5 },
+    { isOnline: 'true', venueName: null }, { isOnline: 0 }, { isOnline: null },
+    { isOnline: true, venueName: 'Test venue' }, { isOnline: true, venueName: '' },
+    { isOnline: true, venueName: undefined }, { venueName: undefined },
+  ]) {
+    const response = await post({ ...createInput(), ...invalid }).expect(400);
+    assert.equal(response.body.error.code, 'VALIDATION_FAILED');
+  }
+  const online = await post({ ...createInput(), isOnline: true, venueName: null, capacity: 2 }).expect(201);
+  assert.equal(online.body.venueName, null); assert.equal(online.body.joinedCount, 1);
+});
+
+test('clients cannot supply organizer, status, members or other internal fields', async () => {
+  for (const invalid of [
+    { organizerId: users[2] }, { status: 'DRAFT' }, { members: [{ userId: users[2] }] },
+    { minParticipants: 4 }, { id: randomUUID() }, { joinedCount: 5 }, { media: [] }, { address: 'Not supported' },
+  ]) {
+    const response = await post({ ...createInput(), ...invalid }).expect(400);
+    assert.equal(response.body.error.code, 'VALIDATION_FAILED');
+  }
+  const missing = createInput() as Partial<CreateLobbyRequestDto>;
+  delete missing.title;
+  await post(missing).expect(400);
 });

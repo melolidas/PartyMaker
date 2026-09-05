@@ -4,7 +4,9 @@ import { isUUID } from 'class-validator';
 
 import { PrismaService } from '../prisma/prisma.service';
 import type { ListLobbiesQueryDto } from './dto/list-lobbies-query.dto';
+import type { CreateLobbyRequestDto } from './dto/create-lobby-request.dto';
 import type { LobbyPageResponseDto, LobbyResponseDto } from './dto/lobby-response.dto';
+import { parseLobbyInstant } from './lobby-instant';
 
 const lobbySelect = {
   id: true, title: true, description: true, category: true, startsAt: true,
@@ -27,7 +29,7 @@ function decodeCursor(value: string): Cursor {
     const cursor: unknown = JSON.parse(Buffer.from(value, 'base64url').toString('utf8'));
     if (typeof cursor !== 'object' || cursor === null) throw new Error('Invalid cursor');
     const { startsAt, id } = cursor as Record<string, unknown>;
-    if (typeof startsAt !== 'string' || new Date(startsAt).toISOString() !== startsAt
+    if (typeof startsAt !== 'string' || parseLobbyInstant(startsAt)?.toISOString() !== startsAt
       || typeof id !== 'string' || !isUUID(id)) throw new Error('Invalid cursor');
     return { startsAt, id };
   } catch {
@@ -52,6 +54,25 @@ function toLobbyResponse(lobby: LobbyRow, userId: string): LobbyResponseDto {
 @Injectable()
 export class LobbiesService {
   constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
+
+  async create(input: CreateLobbyRequestDto, userId: string): Promise<LobbyResponseDto> {
+    const startsAt = parseLobbyInstant(input.startsAt);
+    if (!startsAt || startsAt.getTime() <= Date.now()) {
+      throw new BadRequestException({ code: 'VALIDATION_FAILED', message: 'startsAt must be a supported future instant' });
+    }
+    // Nested create is a single atomic Prisma write: no lobby without its organizer membership.
+    const lobby = await this.prisma.lobby.create({
+      data: {
+        title: input.title, description: input.description, category: input.category,
+        startsAt, timeZone: input.timeZone, capacity: input.capacity,
+        isOnline: input.isOnline, venueName: input.venueName,
+        organizerId: userId, status: 'PUBLISHED', minParticipants: 2,
+        members: { create: { userId, role: 'ORGANIZER', status: 'JOINED' } },
+      },
+      select: lobbySelect,
+    });
+    return toLobbyResponse(lobby, userId);
+  }
 
   async list(query: ListLobbiesQueryDto, userId: string): Promise<LobbyPageResponseDto> {
     const cursor = query.after === undefined ? null : decodeCursor(query.after);

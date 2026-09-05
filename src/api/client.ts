@@ -1,5 +1,5 @@
 import { getApiBaseUrl } from './config';
-import type { Lobby, LobbyPage } from './lobbyTypes';
+import type { CreateLobbyInput, Lobby, LobbyPage } from './lobbyTypes';
 import {
   ApiClientError,
   createApiConfigurationError,
@@ -177,6 +177,12 @@ export class ApiClient {
 
   getLobby(id: string): Promise<Lobby> {
     return this.protectedRequest<Lobby>(`/lobbies/${encodeURIComponent(id)}`, { method: 'GET' });
+  }
+
+  createLobby(input: CreateLobbyInput): Promise<Lobby> {
+    // The shared transport retries only an explicit INVALID_ACCESS_TOKEN rejection,
+    // never an ambiguous network/server failure after a potentially committed POST.
+    return this.protectedRequest<Lobby>('/lobbies', { method: 'POST', body: input });
   }
 
   updateProfile(input: UpdateProfileInput): Promise<UserProfile> {

@@ -11,7 +11,7 @@ import {
 
 import { ApiClient } from '../api/client';
 import { ApiClientError } from '../api/errors';
-import type { LobbyReadApi } from '../api/lobbyTypes';
+import type { LobbyApi } from '../api/lobbyTypes';
 import type {
   LoginInput,
   RegisterInput,
@@ -23,7 +23,7 @@ import { refreshTokenStorage } from './refreshTokenStorage';
 export type AuthStatus = 'restoring' | 'authenticated' | 'unauthenticated';
 
 type AuthContextValue = {
-  lobbyApi: LobbyReadApi;
+  lobbyApi: LobbyApi;
   status: AuthStatus;
   user: UserProfile | null;
   login: (input: LoginInput) => Promise<void>;

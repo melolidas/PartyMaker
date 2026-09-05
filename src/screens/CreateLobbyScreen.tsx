@@ -1,297 +1,128 @@
-import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
+import { useEffect, useMemo, useSyncExternalStore } from 'react';
+import { ActivityIndicator, KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { Feather } from '@expo/vector-icons';
-import { photos } from '../assets';
+import { useAuth } from '../auth/AuthProvider';
 import { IconButton } from '../components/Primitives';
 import { Screen } from '../components/Screen';
+import { CREATE_LOBBY_TIME_ZONE, CreateLobbyFormStore, emptyLobbyForm, LOBBY_CATEGORIES } from '../features/home/createLobbyForm';
 import { useI18n } from '../i18n/LocalizationProvider';
+import type { TranslationKey } from '../i18n/translations';
+import type { LobbyCategory } from '../api/lobbyTypes';
 import { colors, radius } from '../theme';
 
-type IconName = React.ComponentProps<typeof Feather>['name'];
+const categoryLabels: Record<LobbyCategory, TranslationKey> = {
+  DRINKS: 'category.drinks', GAMING: 'category.gaming', FOOD: 'category.food',
+  SPORT: 'category.sport', MOVIES: 'category.movies', OUTDOORS: 'category.outdoors',
+};
 
-export function CreateLobbyScreen({ onClose }: { onClose: () => void }) {
+export function CreateLobbyScreen({ onClose, onCreated }: { onClose: () => void; onCreated: (id: string) => void }) {
   const { t } = useI18n();
-  const title = t('demo.beer');
-  const description = t('demo.lobbyDescription');
-  return (
+  const { lobbyApi, status, user, storageRecoveryRequired } = useAuth();
+  const account = status === 'authenticated' && !storageRecoveryRequired ? user?.id ?? null : null;
+  const store = useMemo(() => new CreateLobbyFormStore(input => lobbyApi.createLobby(input), onCreated), [lobbyApi, onCreated]);
+  const snapshot = useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot);
+  useEffect(() => {
+    store.setAccount(account);
+    return () => store.setAccount(null);
+  }, [store, account]);
+  const state = snapshot.account === account ? snapshot : emptyLobbyForm(account);
+  const { fields, submitting } = state;
+  const editable = !!account && !submitting && snapshot.account === account;
+
+  return <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
     <Screen contentContainerStyle={styles.content}>
       <View style={styles.header}>
         <IconButton name="x" accessibilityLabel={t('a11y.close')} onPress={onClose} />
-        <Text style={styles.headerTitle}>{t('nav.create')} · {t('lobbies.demo')}</Text>
+        <Text accessibilityRole="header" style={styles.headerTitle}>{t('nav.create')}</Text>
         <View style={styles.headerSpacer} />
       </View>
-
-      <View style={styles.photoRow}>
-        <View style={styles.selectedPhoto}>
-          <Image source={photos.party} style={styles.photoImage} />
-        </View>
-        <Pressable style={styles.addPhoto}>
-          <Feather name="camera" size={25} color={colors.text} />
-          <Text style={styles.addPhotoText}>{t('create.addPhoto')}</Text>
-        </Pressable>
+      <View style={styles.unavailable}>
+        <Feather name="image" size={25} color={colors.muted} />
+        <Text style={styles.note}>{t('create.mediaUnavailable')}</Text>
       </View>
 
       <View style={styles.inputCard}>
         <Text style={styles.label}>{t('create.title')}</Text>
-        <View style={styles.inlineValue}>
-          <Text style={[styles.value, styles.titleValue]}>{title}</Text>
-          <Text style={styles.counter}>{Array.from(title).length}/40</Text>
-        </View>
+        <TextInput testID="create-title" accessibilityLabel={t('create.title')} value={fields.title} editable={editable}
+          onChangeText={title => store.update({ title })} style={styles.input} placeholderTextColor={colors.subtle} />
+        <Text style={styles.counter}>{Array.from(fields.title.trim()).length}/40</Text>
       </View>
-
-      <View style={[styles.inputCard, styles.descriptionCard]}>
+      <View style={styles.inputCard}>
         <Text style={styles.label}>{t('create.description')}</Text>
-        <Text style={styles.value}>{description}</Text>
-        <Text style={styles.counterBottom}>{Array.from(description).length}/200</Text>
+        <TextInput testID="create-description" accessibilityLabel={t('create.description')} value={fields.description} editable={editable}
+          onChangeText={description => store.update({ description })} multiline style={[styles.input, styles.description]} />
+        <Text style={styles.counter}>{Array.from(fields.description.trim()).length}/200</Text>
       </View>
-
       <View style={styles.inputCard}>
         <Text style={styles.label}>{t('create.category')}</Text>
-        <FieldRow text={t('category.drinks')} />
-      </View>
-
-      <View style={styles.groupCard}>
-        <FieldRow icon="map-pin" text="Bar Campus" hint={t('create.location')} />
-        <View style={styles.groupDivider} />
-        <FieldRow icon="calendar" text={t('demo.todayAug25')} />
-        <View style={styles.groupDivider} />
-        <FieldRow icon="clock" text={t('create.time')} muted />
-      </View>
-
-      <View style={styles.peopleCard}>
-        <View style={styles.peopleTop}>
-          <View style={styles.peopleLabel}>
-            <Feather name="users" size={17} color={colors.muted} />
-            <Text style={styles.peopleText}>{t('create.maxPeople')}</Text>
-          </View>
-          <View style={styles.counterControl}>
-            <Pressable style={styles.circleButton} accessibilityRole="button" accessibilityLabel={t('a11y.fewerPeople')}>
-              <Feather name="minus" size={17} color={colors.text} />
-            </Pressable>
-            <Text style={styles.count}>6</Text>
-            <Pressable style={styles.circleButton} accessibilityRole="button" accessibilityLabel={t('a11y.morePeople')}>
-              <Feather name="plus" size={17} color={colors.text} />
-            </Pressable>
-          </View>
+        <View style={styles.choices}>
+          {LOBBY_CATEGORIES.map(category => <Pressable key={category} testID={'create-category-' + category}
+            accessibilityRole="radio" accessibilityLabel={t(categoryLabels[category])} accessibilityState={{ checked: fields.category === category, disabled: !editable }}
+            disabled={!editable} onPress={() => store.update({ category })} style={[styles.choice, fields.category === category && styles.selected]}>
+            <Text style={[styles.choiceText, fields.category === category && styles.selectedText]}>{t(categoryLabels[category])}</Text>
+          </Pressable>)}
         </View>
-        <Text style={styles.minimum}>{t('create.minimum')}</Text>
       </View>
-
-      <Pressable style={styles.primaryButton} disabled accessibilityRole="button" accessibilityState={{ disabled: true }}>
-        <Text style={styles.primaryText}>{t('lobbies.createUnavailable')}</Text>
+      <View style={styles.inputCard}>
+        <Text style={styles.label}>{t('create.format')}</Text>
+        <View style={styles.choices}>
+          {[false, true].map(isOnline => <Pressable key={String(isOnline)} testID={isOnline ? 'create-online' : 'create-offline'}
+            accessibilityRole="radio" accessibilityLabel={t(isOnline ? 'home.online' : 'create.offline')} disabled={!editable}
+            accessibilityState={{ checked: fields.isOnline === isOnline, disabled: !editable }}
+            onPress={() => store.update({ isOnline })} style={[styles.choice, fields.isOnline === isOnline && styles.selected]}>
+            <Text style={[styles.choiceText, fields.isOnline === isOnline && styles.selectedText]}>{t(isOnline ? 'home.online' : 'create.offline')}</Text>
+          </Pressable>)}
+        </View>
+      </View>
+      {!fields.isOnline ? <View style={styles.inputCard}>
+        <Text style={styles.label}>{t('create.venue')}</Text>
+        <TextInput testID="create-venue" accessibilityLabel={t('create.venue')} value={fields.venueName} editable={editable}
+          onChangeText={venueName => store.update({ venueName })} style={styles.input} />
+      </View> : null}
+      <View style={styles.inputCard}>
+        <Text style={styles.label}>{t('create.date')}</Text>
+        <TextInput testID="create-date" accessibilityLabel={t('create.date')} placeholder="YYYY-MM-DD" placeholderTextColor={colors.subtle}
+          value={fields.date} editable={editable} autoCapitalize="none" onChangeText={date => store.update({ date })} style={styles.input} />
+        <Text style={styles.label}>{t('create.time')}</Text>
+        <TextInput testID="create-time" accessibilityLabel={t('create.time')} placeholder="HH:MM" placeholderTextColor={colors.subtle}
+          value={fields.time} editable={editable} onChangeText={time => store.update({ time })} style={styles.input} />
+        <Text testID="create-timezone" style={styles.note}>{t('create.timeZone')}: {CREATE_LOBBY_TIME_ZONE} (UTC+06:00)</Text>
+      </View>
+      <View style={styles.inputCard}>
+        <Text style={styles.label}>{t('create.maxPeople')}</Text>
+        <TextInput testID="create-capacity" accessibilityLabel={t('create.maxPeople')} keyboardType="number-pad" value={fields.capacity} editable={editable}
+          onChangeText={capacity => store.update({ capacity })} style={styles.input} />
+        <Text style={styles.note}>{t('create.organizerPlace')}</Text>
+      </View>
+      {state.error ? <Text testID="create-error" accessibilityLiveRegion="polite" style={styles.error}>{t(state.error)}</Text> : null}
+      <Pressable testID="create-submit" disabled={!editable} accessibilityRole="button" accessibilityState={{ disabled: !editable, busy: submitting }}
+        accessibilityLabel={t('nav.create')} onPress={() => void store.submit()} style={[styles.primaryButton, !editable && styles.disabled]}>
+        {submitting ? <ActivityIndicator color={colors.black} /> : <Text style={styles.primaryText}>{t('nav.create')}</Text>}
       </Pressable>
     </Screen>
-  );
-}
-
-function FieldRow({
-  icon,
-  text,
-  hint,
-  muted,
-}: {
-  icon?: IconName;
-  text: string;
-  hint?: string;
-  muted?: boolean;
-}) {
-  return (
-    <View style={styles.fieldRow}>
-      {icon ? <Feather name={icon} size={17} color={colors.muted} /> : null}
-      <View style={styles.fieldTextWrap}>
-        {hint ? <Text style={styles.fieldHint}>{hint}</Text> : null}
-        <Text style={[styles.fieldText, muted && styles.mutedText]}>{text}</Text>
-      </View>
-      <Feather name="chevron-right" size={19} color={colors.text} />
-    </View>
-  );
+  </KeyboardAvoidingView>;
 }
 
 const styles = StyleSheet.create({
-  content: {
-    paddingBottom: 36,
-  },
-  header: {
-    height: 48,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 14,
-  },
-  headerTitle: {
-    color: colors.text,
-    fontSize: 17,
-    fontWeight: '700',
-  },
-  headerSpacer: {
-    width: 38,
-  },
-  photoRow: {
-    height: 138,
-    flexDirection: 'row',
-    gap: 10,
-    marginBottom: 14,
-  },
-  selectedPhoto: {
-    flex: 1.35,
-    height: '100%',
-    borderRadius: radius.medium,
-    overflow: 'hidden',
-  },
-  photoImage: {
-    width: '100%',
-    height: '100%',
-  },
-  addPhoto: {
-    flex: 1,
-    borderRadius: radius.medium,
-    borderWidth: 1,
-    borderStyle: 'dashed',
-    borderColor: '#3A4043',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 9,
-  },
-  addPhotoText: {
-    color: colors.muted,
-    fontSize: 12,
-  },
-  inputCard: {
-    minHeight: 70,
-    backgroundColor: colors.surface,
-    borderWidth: 1,
-    borderColor: colors.borderSoft,
-    borderRadius: radius.medium,
-    padding: 14,
-    marginBottom: 10,
-  },
-  descriptionCard: {
-    minHeight: 104,
-    paddingBottom: 30,
-  },
-  label: {
-    color: colors.muted,
-    fontSize: 12,
-    marginBottom: 8,
-  },
-  inlineValue: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 12,
-  },
-  titleValue: {
-    flex: 1,
-  },
-  value: {
-    color: colors.text,
-    fontSize: 14,
-    lineHeight: 20,
-  },
-  counter: {
-    color: colors.subtle,
-    fontSize: 11,
-  },
-  counterBottom: {
-    position: 'absolute',
-    right: 14,
-    bottom: 14,
-    color: colors.subtle,
-    fontSize: 11,
-  },
-  fieldRow: {
-    minHeight: 42,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 11,
-  },
-  fieldTextWrap: {
-    flex: 1,
-    gap: 4,
-  },
-  fieldHint: {
-    color: colors.muted,
-    fontSize: 11,
-  },
-  fieldText: {
-    color: colors.text,
-    fontSize: 14,
-  },
-  mutedText: {
-    color: colors.muted,
-  },
-  groupCard: {
-    borderRadius: radius.medium,
-    borderWidth: 1,
-    borderColor: colors.borderSoft,
-    backgroundColor: colors.surface,
-    paddingHorizontal: 14,
-    marginBottom: 10,
-  },
-  groupDivider: {
-    height: StyleSheet.hairlineWidth,
-    backgroundColor: colors.border,
-    marginLeft: 28,
-  },
-  peopleCard: {
-    borderRadius: radius.medium,
-    borderWidth: 1,
-    borderColor: colors.borderSoft,
-    backgroundColor: colors.surface,
-    padding: 14,
-    marginBottom: 34,
-  },
-  peopleTop: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  peopleLabel: {
-    flex: 1,
-    marginRight: 12,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-  },
-  peopleText: {
-    flexShrink: 1,
-    color: colors.muted,
-    fontSize: 13,
-  },
-  counterControl: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 15,
-  },
-  circleButton: {
-    width: 30,
-    height: 30,
-    borderRadius: 15,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#22272A',
-  },
-  count: {
-    minWidth: 12,
-    color: colors.text,
-    fontSize: 14,
-    textAlign: 'center',
-  },
-  minimum: {
-    color: colors.subtle,
-    fontSize: 11,
-    textAlign: 'center',
-    marginTop: 12,
-  },
-  primaryButton: {
-    height: 54,
-    backgroundColor: colors.text,
-    borderRadius: radius.small,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  primaryText: {
-    color: colors.black,
-    fontSize: 15,
-    fontWeight: '800',
-  },
+  container: { flex: 1 },
+  content: { paddingBottom: 36 },
+  header: { height: 48, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 },
+  headerTitle: { color: colors.text, fontSize: 17, fontWeight: '700' },
+  headerSpacer: { width: 38 },
+  unavailable: { borderRadius: radius.medium, borderWidth: 1, borderStyle: 'dashed', borderColor: '#3A4043', alignItems: 'center', padding: 20, gap: 9, marginBottom: 14 },
+  inputCard: { minHeight: 70, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.borderSoft, borderRadius: radius.medium, padding: 14, marginBottom: 10 },
+  label: { color: colors.muted, fontSize: 12, marginBottom: 8 },
+  input: { color: colors.text, fontSize: 14, lineHeight: 20, minHeight: 36, paddingVertical: 6 },
+  description: { minHeight: 68, textAlignVertical: 'top' },
+  counter: { color: colors.subtle, fontSize: 11, textAlign: 'right' },
+  note: { color: colors.muted, fontSize: 12, lineHeight: 18 },
+  choices: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  choice: { borderRadius: radius.pill, borderColor: colors.border, borderWidth: 1, paddingHorizontal: 14, paddingVertical: 10 },
+  choiceText: { color: colors.text, fontSize: 13 },
+  selected: { backgroundColor: colors.text },
+  selectedText: { color: colors.black },
+  error: { color: '#F0AAA6', fontSize: 13, lineHeight: 20, marginVertical: 12 },
+  primaryButton: { height: 54, backgroundColor: colors.text, borderRadius: radius.small, alignItems: 'center', justifyContent: 'center', marginTop: 14 },
+  primaryText: { color: colors.black, fontSize: 15, fontWeight: '800' },
+  disabled: { opacity: 0.55 },
 });

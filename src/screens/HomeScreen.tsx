@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { Outfit_600SemiBold } from '@expo-google-fonts/outfit/600SemiBold';
@@ -18,11 +18,14 @@ import { SearchModal } from '../features/search/SearchModal';
 import { useI18n } from '../i18n/LocalizationProvider';
 import { colors, radius } from '../theme';
 
-export function HomeScreen() {
+export function HomeScreen({ initialLobbyId = null, onInitialLobbyConsumed }: {
+  initialLobbyId?: string | null; onInitialLobbyConsumed?: () => void;
+} = {}) {
   const { t } = useI18n();
   const { session } = useHomeExperience();
   const [brandFontLoaded] = useFonts({ Outfit_600SemiBold });
-  const [selectedLobbyId, setSelectedLobbyId] = useState<string | null>(null);
+  const [selectedLobbyId, setSelectedLobbyId] = useState<string | null>(initialLobbyId);
+  useEffect(() => { if (initialLobbyId) onInitialLobbyConsumed?.(); }, [initialLobbyId, onInitialLobbyConsumed]);
   const [chatsEntry, setChatsEntry] = useState<{ initialLobby?: DemoLobby; listPage?: 'chats' | 'your-lobbies' } | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
   const yourLobbies = getJoinedLobbies(demoLobbies, session);

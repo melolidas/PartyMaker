@@ -1,6 +1,6 @@
 # PartyMaker backend
 
-Independent NestJS REST API for the PartyMaker Expo application. Auth, Profile and the read-only Lobby catalog/details are connected to Expo, including Expo Web through an explicit CORS allowlist.
+Independent NestJS REST API for the PartyMaker Expo application. Auth, Profile, Lobby creation and catalog/details are connected to Expo, including Expo Web through an explicit CORS allowlist.
 
 ## Requirements
 
@@ -109,7 +109,7 @@ The shared `configureApp` applies the same policy in tests and production bootst
 
 `npm run test:cors` runs the CORS/configuration checks without PostgreSQL or `.env`. The same tests also run in `npm test`, alongside the database-backed Auth/Profile suite.
 
-On web, refresh tokens remain **memory-only**; reloading the page requires explicit sign-in. There is no cookie or localStorage session persistence. Profile changes persist in PostgreSQL. Home loads real upcoming lobbies and read-only details. Lobby creation/joining, Search, Chat, Moments, Activity/Notifications and Media APIs remain unimplemented; their separate frontend sections are labeled demos.
+On web, refresh tokens remain **memory-only**; reloading the page requires explicit sign-in. There is no cookie or localStorage session persistence. Profile changes and newly created lobbies persist in PostgreSQL. Home loads real upcoming lobbies and read-only details. Joining/leaving, editing/deleting lobbies, Search, Chat, Moments, Activity/Notifications and Media APIs remain unimplemented; existing demo sections stay separate and labeled.
 
 ## Auth and profile API
 
@@ -150,17 +150,34 @@ Successful register, login, and refresh requests return:
 
 Passwords are hashed with Argon2id. Refresh tokens are random opaque values; only their SHA-256 hashes are stored. Access JWTs contain `sub` (user id) and `sid` (session id). Logout revokes refresh for the current session; an access token already issued for it remains valid until its short TTL expires.
 
-## Read-only Lobby API
+## Lobby API: catalog, details and creation
 
-Both endpoints require the existing Bearer access-token guard. Swagger documents their DTOs and validation errors; no database schema change is needed.
+All three endpoints require the existing Bearer access-token guard. Swagger documents their DTOs and validation errors; no database schema change is needed.
 
-- `GET /api/v1/lobbies?limit=20&after=<cursor>` returns `{ "items": [...], "nextCursor": "..." }` (or `null` for the last page). `limit` is an integer from 1 to 50, default 20. `after` is the opaque keyset cursor returned by the preceding page; malformed cursors return `400 VALIDATION_FAILED`.
+- `GET /api/v1/lobbies?limit=20&after=<cursor>` returns `{ "items": [...], "nextCursor": "..." }` (or `null` for the last page). `limit` is an integer from 1 to 50, default 20. `after` is the opaque keyset cursor returned by the preceding page; malformed cursors return `400 VALIDATION_FAILED`. Cursor dates must be canonical UTC ISO timestamps with a four-digit AD year (0001–9999); extended years such as `+275760` are rejected before Prisma rather than producing 500.
 - The catalog includes only `PUBLISHED` events with `startsAt > now`, sorted by `startsAt ASC, id ASC`. Equal timestamps use id as the stable tie-breaker. Each request evaluates the current time; pages are not a frozen snapshot of concurrent event edits.
 - `GET /api/v1/lobbies/:id` returns a published lobby, including a past published event. Missing, draft, cancelled or completed lobbies return `404 LOBBY_NOT_FOUND`; malformed UUIDs return validation error 400.
 
 The explicit response projection contains only `id`, `title`, `description`, `category`, `startsAt` (absolute ISO timestamp), `timeZone`, `isOnline`, `venueName` (null for online events), `capacity`, `joinedCount`, `isJoined`, and `groupExtroversionLevel`. No participant lists, emails, credential hashes, raw tokens, coordinates or internal media storage keys are exposed. LEFT and REMOVED memberships do not count and do not set `isJoined`.
 
 The group score is `round(sum(JOINED users' extroversionScoreX2) / joinedCount) / 2`: mean level rounded to the nearest half-level, with positive ties upward. It is null when no JOINED users exist. The client hides an absent score and uses category placeholders instead of exposing internal media paths. No distance is claimed without geographic search.
+
+### POST /api/v1/lobbies
+
+Returns **201** with the same safe Lobby DTO. Required JSON fields:
+
+- `title`: trimmed string, 1–40 Unicode characters.
+- `description`: trimmed string, 1–200 characters.
+- `category`: DRINKS, GAMING, FOOD, SPORT, MOVIES or OUTDOORS.
+- `startsAt`: a real future RFC3339 instant with explicit `Z` or `±HH:MM`, seconds and optional 1–3 fractional digits. Both civil and UTC years must be 0001–9999. Invalid calendar dates, implicit local time, 24:00 and extended years are rejected.
+- `timeZone`: valid named IANA zone (up to 64 characters), e.g. `Asia/Bishkek`; numeric offset strings are not IANA zones. It controls display and does not override the absolute instant.
+- `capacity`: integer 2–2147483647 (PostgreSQL INTEGER range, not a new product limit).
+- `isOnline`: JSON boolean, not a string or number.
+- `venueName`: explicitly null online; trimmed nonempty string up to 140 characters offline.
+
+The authenticated user supplies `organizerId` implicitly through the guard. The server sets `status=PUBLISHED` and `minParticipants=2`. Unknown/internal fields (`organizerId`, `status`, `members`, `id`, media, etc.) return `400 VALIDATION_FAILED`, as do invalid inputs. A nested Prisma create atomically inserts the lobby and exactly one organizer membership (`role=ORGANIZER`, `status=JOINED`); a child-insert failure rolls back the lobby. The response immediately reports `joinedCount=1`, `isJoined=true` and the organizer's real group score.
+
+POST has no idempotency key or automatic network retry. A lost response can mean the record was already saved; inspect the catalog before explicitly resubmitting. The frontend only retries after a definite guard rejection (`401 INVALID_ACCESS_TOKEN`) using its existing refresh mechanism. Joining/leaving, personal lobby lists, editing/deleting and Media remain out of scope.
 
 `npm test` includes database-backed Lobby tests using isolated random-UUID fixtures, cleaned up by their own ids; it never resets or reseeds the database. The seed updates fixed records, so do not rerun it just to refresh Home dates in an existing database. Existing past seed events correctly produce an empty upcoming catalog. For a manual smoke test, create isolated future PUBLISHED fixtures with known ids and clean up only those fixtures; see the root README for list/details/empty/error-retry steps.
 
@@ -181,4 +198,4 @@ Every API error is normalized to this shape:
 }
 ```
 
-Health, Auth, Profile and read-only Lobby endpoints are implemented. Lobby mutations, chat, moments, notifications and media APIs remain outside this stage; demo frontend records are kept separate from real lobbies.
+Health, Auth, Profile, Lobby creation and read-only Lobby endpoints are implemented. Other Lobby mutations, chat, moments, notifications and media APIs remain outside this stage; demo frontend records are kept separate from real lobbies.

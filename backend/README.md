@@ -1,6 +1,6 @@
 # PartyMaker backend
 
-Independent NestJS REST API for the PartyMaker Expo application. Auth and Profile are connected to the Expo frontend, including Expo Web through an explicit CORS allowlist.
+Independent NestJS REST API for the PartyMaker Expo application. Auth, Profile and the read-only Lobby catalog/details are connected to Expo, including Expo Web through an explicit CORS allowlist.
 
 ## Requirements
 
@@ -109,7 +109,7 @@ The shared `configureApp` applies the same policy in tests and production bootst
 
 `npm run test:cors` runs the CORS/configuration checks without PostgreSQL or `.env`. The same tests also run in `npm test`, alongside the database-backed Auth/Profile suite.
 
-On web, refresh tokens remain **memory-only**; reloading the page requires explicit sign-in. There is no cookie or localStorage session persistence. Profile name and extroversion changes persist in PostgreSQL and are loaded again after sign-in. Lobby, Chat, Moments, Activity/Notifications and Media remain mocked/unimplemented; this setup does not add those APIs.
+On web, refresh tokens remain **memory-only**; reloading the page requires explicit sign-in. There is no cookie or localStorage session persistence. Profile changes persist in PostgreSQL. Home loads real upcoming lobbies and read-only details. Lobby creation/joining, Search, Chat, Moments, Activity/Notifications and Media APIs remain unimplemented; their separate frontend sections are labeled demos.
 
 ## Auth and profile API
 
@@ -150,6 +150,20 @@ Successful register, login, and refresh requests return:
 
 Passwords are hashed with Argon2id. Refresh tokens are random opaque values; only their SHA-256 hashes are stored. Access JWTs contain `sub` (user id) and `sid` (session id). Logout revokes refresh for the current session; an access token already issued for it remains valid until its short TTL expires.
 
+## Read-only Lobby API
+
+Both endpoints require the existing Bearer access-token guard. Swagger documents their DTOs and validation errors; no database schema change is needed.
+
+- `GET /api/v1/lobbies?limit=20&after=<cursor>` returns `{ "items": [...], "nextCursor": "..." }` (or `null` for the last page). `limit` is an integer from 1 to 50, default 20. `after` is the opaque keyset cursor returned by the preceding page; malformed cursors return `400 VALIDATION_FAILED`.
+- The catalog includes only `PUBLISHED` events with `startsAt > now`, sorted by `startsAt ASC, id ASC`. Equal timestamps use id as the stable tie-breaker. Each request evaluates the current time; pages are not a frozen snapshot of concurrent event edits.
+- `GET /api/v1/lobbies/:id` returns a published lobby, including a past published event. Missing, draft, cancelled or completed lobbies return `404 LOBBY_NOT_FOUND`; malformed UUIDs return validation error 400.
+
+The explicit response projection contains only `id`, `title`, `description`, `category`, `startsAt` (absolute ISO timestamp), `timeZone`, `isOnline`, `venueName` (null for online events), `capacity`, `joinedCount`, `isJoined`, and `groupExtroversionLevel`. No participant lists, emails, credential hashes, raw tokens, coordinates or internal media storage keys are exposed. LEFT and REMOVED memberships do not count and do not set `isJoined`.
+
+The group score is `round(sum(JOINED users' extroversionScoreX2) / joinedCount) / 2`: mean level rounded to the nearest half-level, with positive ties upward. It is null when no JOINED users exist. The client hides an absent score and uses category placeholders instead of exposing internal media paths. No distance is claimed without geographic search.
+
+`npm test` includes database-backed Lobby tests using isolated random-UUID fixtures, cleaned up by their own ids; it never resets or reseeds the database. The seed updates fixed records, so do not rerun it just to refresh Home dates in an existing database. Existing past seed events correctly produce an empty upcoming catalog. For a manual smoke test, create isolated future PUBLISHED fixtures with known ids and clean up only those fixtures; see the root README for list/details/empty/error-retry steps.
+
 ## Error response
 
 Every API error is normalized to this shape:
@@ -167,4 +181,4 @@ Every API error is normalized to this shape:
 }
 ```
 
-Health, Auth, and Profile are implemented and Auth/Profile are connected to Expo. Lobby, chat, moments, notifications, and media APIs deliberately remain unimplemented; those frontend features retain their existing mock data.
+Health, Auth, Profile and read-only Lobby endpoints are implemented. Lobby mutations, chat, moments, notifications and media APIs remain outside this stage; demo frontend records are kept separate from real lobbies.

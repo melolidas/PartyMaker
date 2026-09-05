@@ -58,7 +58,7 @@ export function ActivityScreen() {
   const { t } = useI18n();
   return (
     <Screen>
-      <Text style={styles.title}>{t('nav.activity')}</Text>
+      <Text style={styles.title}>{t('nav.activity')} · {t('lobbies.demo')}</Text>
       {groups.map((group) => (
         <View key={group.title} style={styles.group}>
           <Text style={styles.groupTitle}>{t(group.title)}</Text>

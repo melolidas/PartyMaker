@@ -16,7 +16,7 @@ export function CreateLobbyScreen({ onClose }: { onClose: () => void }) {
     <Screen contentContainerStyle={styles.content}>
       <View style={styles.header}>
         <IconButton name="x" accessibilityLabel={t('a11y.close')} onPress={onClose} />
-        <Text style={styles.headerTitle}>{t('nav.create')}</Text>
+        <Text style={styles.headerTitle}>{t('nav.create')} · {t('lobbies.demo')}</Text>
         <View style={styles.headerSpacer} />
       </View>
 
@@ -76,8 +76,8 @@ export function CreateLobbyScreen({ onClose }: { onClose: () => void }) {
         <Text style={styles.minimum}>{t('create.minimum')}</Text>
       </View>
 
-      <Pressable style={styles.primaryButton}>
-        <Text style={styles.primaryText}>{t('nav.create')}</Text>
+      <Pressable style={styles.primaryButton} disabled accessibilityRole="button" accessibilityState={{ disabled: true }}>
+        <Text style={styles.primaryText}>{t('lobbies.createUnavailable')}</Text>
       </Pressable>
     </Screen>
   );

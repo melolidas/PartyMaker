@@ -11,6 +11,7 @@ import {
 
 import { ApiClient } from '../api/client';
 import { ApiClientError } from '../api/errors';
+import type { LobbyReadApi } from '../api/lobbyTypes';
 import type {
   LoginInput,
   RegisterInput,
@@ -22,6 +23,7 @@ import { refreshTokenStorage } from './refreshTokenStorage';
 export type AuthStatus = 'restoring' | 'authenticated' | 'unauthenticated';
 
 type AuthContextValue = {
+  lobbyApi: LobbyReadApi;
   status: AuthStatus;
   user: UserProfile | null;
   login: (input: LoginInput) => Promise<void>;
@@ -157,6 +159,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [client]);
 
   const value = useMemo<AuthContextValue>(() => ({
+    lobbyApi: client,
     status,
     user,
     login,
@@ -168,6 +171,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     recoveringSessionStorage,
     recoverSessionStorage,
   }), [
+    client,
     status,
     user,
     login,

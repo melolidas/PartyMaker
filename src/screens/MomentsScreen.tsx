@@ -12,7 +12,7 @@ export function MomentsScreen() {
   return (
     <Screen>
       <View style={styles.header}>
-        <Text style={styles.title}>{t('nav.moments')}</Text>
+        <Text style={styles.title}>{t('nav.moments')} · {t('lobbies.demo')}</Text>
         <IconButton name="share" accessibilityLabel={t('a11y.share')} style={styles.shareButton} />
       </View>
       <View style={styles.tabs}>

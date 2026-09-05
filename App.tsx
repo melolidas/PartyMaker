@@ -29,13 +29,13 @@ export default function App() {
 }
 
 function AppGate() {
-  const { status } = useAuth();
+  const { status, user } = useAuth();
 
   if (status === 'restoring') return <AuthLoadingScreen />;
   if (status === 'unauthenticated') return <AuthScreen />;
 
   return (
-    <HomeExperienceProvider>
+    <HomeExperienceProvider key={user?.id}>
       <MockChatProvider>
         <PartyMaker />
       </MockChatProvider>

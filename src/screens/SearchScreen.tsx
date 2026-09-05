@@ -50,7 +50,7 @@ export function SearchScreen({ active, onClose, onSelectLobby, scrollGesture }: 
           >
             <Feather name="chevron-left" size={25} color={colors.white} />
           </Pressable>
-          <Text accessibilityRole="header" style={styles.title}>{t('search.title')}</Text>
+          <Text accessibilityRole="header" style={styles.title}>{t('search.title')} · {t('lobbies.demo')}</Text>
         </View>
 
         <View style={[styles.inputRow, inputFocused && styles.inputFocused]}>

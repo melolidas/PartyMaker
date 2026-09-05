@@ -252,6 +252,7 @@ export function ProfileScreen() {
         </View>
       ) : null}
 
+      <Text style={styles.location}>{t('lobbies.demoProfile')}</Text>
       <View testID="profile-stats" style={styles.stats}>
         <Stat value="24" label={t('nav.moments')} />
         <Stat value="18" label={t('common.lobbies')} />

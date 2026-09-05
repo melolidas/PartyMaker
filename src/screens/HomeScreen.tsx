@@ -11,8 +11,9 @@ import { ChatsModal } from '../features/chats/ChatsModal';
 import { useHomeExperience } from '../features/home/HomeExperienceProvider';
 import { LobbyExtroversionIndicator } from '../features/home/LobbyExtroversionIndicator';
 import { LobbyCountdown } from '../features/home/LobbyCountdown';
-import { LobbyPreview } from '../features/home/LobbyPreview';
-import { DemoLobby, demoLobbies, getJoinedLobbies, getLobbyMembers, isLobbyJoined } from '../features/home/lobbies';
+import { LiveLobbyFeed } from '../features/home/LiveLobbyFeed';
+import { LiveLobbyDetails } from '../features/home/LiveLobbyDetails';
+import { DemoLobby, demoLobbies, getJoinedLobbies, getLobbyMembers } from '../features/home/lobbies';
 import { SearchModal } from '../features/search/SearchModal';
 import { useI18n } from '../i18n/LocalizationProvider';
 import { colors, radius } from '../theme';
@@ -21,11 +22,10 @@ export function HomeScreen() {
   const { t } = useI18n();
   const { session } = useHomeExperience();
   const [brandFontLoaded] = useFonts({ Outfit_600SemiBold });
-  const [selectedLobby, setSelectedLobby] = useState<DemoLobby | null>(null);
+  const [selectedLobbyId, setSelectedLobbyId] = useState<string | null>(null);
   const [chatsEntry, setChatsEntry] = useState<{ initialLobby?: DemoLobby; listPage?: 'chats' | 'your-lobbies' } | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
   const yourLobbies = getJoinedLobbies(demoLobbies, session);
-  const nearbyLobbies = demoLobbies.filter((lobby) => !lobby.isYours);
 
   return (
     <>
@@ -34,7 +34,7 @@ export function HomeScreen() {
           <Pressable
             testID="open-search"
             accessibilityRole="button"
-            accessibilityLabel={t('search.open')}
+            accessibilityLabel={`${t('search.open')} · ${t('lobbies.demo')}`}
             onPress={() => setSearchOpen(true)}
             style={({ pressed }) => [styles.searchButton, pressed && styles.pressed]}
           >
@@ -54,7 +54,7 @@ export function HomeScreen() {
           <Pressable
             testID="open-chats"
             accessibilityRole="button"
-            accessibilityLabel={t('chats.open')}
+            accessibilityLabel={`${t('chats.open')} · ${t('lobbies.demo')}`}
             onPress={() => setChatsEntry({})}
             style={({ pressed }) => [styles.chatButton, pressed && styles.pressed]}
           >
@@ -62,8 +62,10 @@ export function HomeScreen() {
           </Pressable>
         </View>
 
+        <Text style={styles.cardMeta}>{t('lobbies.demoTools')}</Text>
+        <LiveLobbyFeed onSelect={setSelectedLobbyId} />
         <SectionHeader
-          title={t('home.yourLobbies')}
+          title={`${t('home.yourLobbies')} · ${t('lobbies.demo')}`}
           action={t('common.viewAll')}
           actionTestID="view-all-your-lobbies"
           actionAccessibilityLabel={t('yourLobbies.open')}
@@ -74,12 +76,8 @@ export function HomeScreen() {
           {yourLobbies.map((lobby) => <MiniLobby key={lobby.id} lobby={lobby} onPress={() => setChatsEntry({ initialLobby: lobby })} />)}
         </ScrollView>
 
-        <SectionHeader title={t('home.nearbyLobbies')} />
-        <View style={styles.nearbyList}>
-          {nearbyLobbies.map((lobby) => <NearbyLobby key={lobby.id} lobby={lobby} onPress={() => setSelectedLobby(lobby)} />)}
-        </View>
       </Screen>
-      {selectedLobby ? <LobbyPreview lobby={selectedLobby} onClose={() => setSelectedLobby(null)} /> : null}
+      {selectedLobbyId ? <LiveLobbyDetails key={selectedLobbyId} id={selectedLobbyId} onClose={() => setSelectedLobbyId(null)} /> : null}
       {chatsEntry ? <ChatsModal {...chatsEntry} onClose={() => setChatsEntry(null)} /> : null}
       {searchOpen ? <SearchModal onClose={() => setSearchOpen(false)} /> : null}
     </>
@@ -118,47 +116,6 @@ function MiniLobby({ lobby, onPress }: LobbyCardProps) {
   );
 }
 
-function NearbyLobby({ lobby, onPress }: LobbyCardProps) {
-  const { t } = useI18n();
-  const { session } = useHomeExperience();
-  const joined = isLobbyJoined(lobby, session);
-  return (
-    <Pressable
-      testID={`nearby-lobby-${lobby.id}`}
-      accessibilityRole="button"
-      accessibilityLabel={t(lobby.titleKey)}
-      accessibilityHint={t('home.openLobby')}
-      onPress={onPress}
-      style={({ pressed }) => [styles.nearbyCard, pressed && styles.pressed]}
-    >
-      <View style={styles.nearbyImageWrap}>
-        <Image source={photos[lobby.photo]} style={styles.nearbyImage} />
-      </View>
-      <View style={styles.nearbyBody}>
-        <View style={styles.lobbyTitleRow}>
-          <Text style={[styles.nearbyTitle, styles.lobbyTitleText]}>{t(lobby.titleKey)}</Text>
-          <LobbyExtroversionIndicator lobby={lobby} size={32} />
-        </View>
-        <Text style={styles.nearbyPlace}>{lobby.placeKey ? t(lobby.placeKey) : lobby.place}</Text>
-        <Text testID={`nearby-meta-${lobby.id}`} style={styles.cardMeta}>{t(lobby.metaKey)}</Text>
-        <LobbyCountdown startsAt={session.startedAt + lobby.startsAfterMs} testID={`nearby-countdown-${lobby.id}`} />
-        <View style={styles.cardFooter}>
-          {joined ? (
-            <View style={styles.memberRow}>
-              <Feather name="check" size={12} color={colors.success} />
-              <Text style={styles.joinedText}>{t('home.joined')}</Text>
-            </View>
-          ) : null}
-          <View style={styles.memberRow}>
-            <Feather name="users" size={12} color={colors.muted} />
-            <Text style={styles.peopleText}>{getLobbyMembers(lobby, session)} / {lobby.capacity}</Text>
-          </View>
-        </View>
-      </View>
-    </Pressable>
-  );
-}
-
 const styles = StyleSheet.create({
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8, paddingTop: 2, marginBottom: 4 },
   brand: { flex: 1, minWidth: 0, color: colors.white, fontSize: 28, lineHeight: 36, letterSpacing: -0.8, textAlign: 'center', includeFontPadding: false },
@@ -176,16 +133,7 @@ const styles = StyleSheet.create({
   lobbyTitleText: { flex: 1 },
   cardSub: { color: colors.muted, fontSize: 12 },
   cardMeta: { color: colors.muted, fontSize: 11, lineHeight: 16 },
-  nearbyList: { gap: 10 },
-  nearbyCard: { minHeight: 108, borderRadius: radius.medium, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface, flexDirection: 'row', alignItems: 'stretch', overflow: 'hidden' },
-  nearbyImageWrap: { width: 96, alignSelf: 'stretch' },
-  nearbyImage: { position: 'absolute', width: '100%', height: '100%' },
-  nearbyBody: { flex: 1, paddingVertical: 12, paddingHorizontal: 12, gap: 5 },
-  nearbyTitle: { color: colors.text, fontSize: 14, fontWeight: '700' },
-  nearbyPlace: { color: colors.muted, fontSize: 11 },
-  cardFooter: { flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', flexWrap: 'wrap', gap: 8, marginTop: 1 },
   memberRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   peopleText: { color: colors.text, fontSize: 11, fontWeight: '600' },
-  joinedText: { color: colors.success, fontSize: 11, fontWeight: '500' },
   pressed: { opacity: 0.72 },
 });

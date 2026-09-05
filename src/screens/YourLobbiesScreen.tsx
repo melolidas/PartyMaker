@@ -37,7 +37,7 @@ export function YourLobbiesScreen({ active, onClose, onOpenChat, scrollGesture }
           >
             <Feather name="chevron-left" size={25} color={colors.white} />
           </Pressable>
-          <Text accessibilityRole="header" style={styles.title}>{t('home.yourLobbies')}</Text>
+          <Text accessibilityRole="header" style={styles.title}>{t('home.yourLobbies')} · {t('lobbies.demo')}</Text>
           <Text testID="your-lobbies-count" accessibilityLabel={`${t('common.lobbies')}: ${lobbies.length}`} style={styles.count}>{lobbies.length}</Text>
         </View>
 

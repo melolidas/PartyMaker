@@ -1,4 +1,5 @@
 import { getApiBaseUrl } from './config';
+import type { Lobby, LobbyPage } from './lobbyTypes';
 import {
   ApiClientError,
   createApiConfigurationError,
@@ -167,6 +168,15 @@ export class ApiClient {
 
   getMe(): Promise<UserProfile> {
     return this.protectedRequest<UserProfile>('/users/me', { method: 'GET' });
+  }
+
+  listLobbies(after?: string): Promise<LobbyPage> {
+    const query = after === undefined ? '' : `&after=${encodeURIComponent(after)}`;
+    return this.protectedRequest<LobbyPage>(`/lobbies?limit=20${query}`, { method: 'GET' });
+  }
+
+  getLobby(id: string): Promise<Lobby> {
+    return this.protectedRequest<Lobby>(`/lobbies/${encodeURIComponent(id)}`, { method: 'GET' });
   }
 
   updateProfile(input: UpdateProfileInput): Promise<UserProfile> {

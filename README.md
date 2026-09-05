@@ -13,7 +13,7 @@ npm start
 
 Scan the QR code with Expo Go or press `a` to open an Android emulator.
 
-## Auth/Profile backend integration
+## Auth/Profile and read-only Lobby integration
 
 Start the local NestJS backend separately using [the backend setup instructions](backend/README.md). Set `EXPO_PUBLIC_API_BASE_URL` in the shell or in your local `.env` (copy `.env.example` only if `.env` does not already exist). The value is public Expo configuration, must be an absolute HTTP(S) URL, and must end in `/api/v1`. Never put `JWT_ACCESS_SECRET`, `DATABASE_URL`, passwords, or other backend secrets in the Expo environment.
 
@@ -32,6 +32,8 @@ The frontend now uses these backend endpoints through one typed API client:
 - `GET /users/me`
 - `PATCH /users/me`
 - `PUT /users/me/extroversion`
+- `GET /lobbies?limit=20&after=<opaque-cursor>`
+- `GET /lobbies/:id`
 
 The access token exists only in application memory. On iOS and Android, the refresh token is stored with Expo SecureStore. On web, the refresh token is intentionally kept in memory and is never written to `localStorage`, so a browser-page refresh requires signing in again.
 
@@ -51,7 +53,7 @@ If reconciliation temporarily fails, use **Retry recovery / Повторить �
 
 **Restart limitation:** a timeout is an in-memory safety boundary, not proof of durable invalidation. Pending/unknown persistent records are not restored, and a new runtime never clears them merely because its WeakMap is empty. However, if a delayed `committed` write physically completes while revocation/tombstone writes are unavailable, a new runtime can observe matching committed credentials. Without confirmed durable cleanup (or confirmed server revocation), absence of session restoration after restart cannot be guaranteed. The regression suite explicitly covers this limit. If the process dies with an unresolved pending writer and no terminal proof, recovery cannot safely unlock it automatically. No extra markers are added to claim a stronger guarantee.
 
-Profile name, bio, city, country code, and extroversion level are now backed by `/users/me`. Avatar, gallery, stats, tabs, and their images remain demo UI. Existing Lobby, Chat, Moments, Activity, Media, and Create Lobby data and behavior remain mocked.
+Profile name, bio, city, country code, and extroversion level are backed by `/users/me`. Home's upcoming catalog and lobby details use PostgreSQL through the same authenticated ApiClient. Avatar, gallery, stats, demo memberships, Search, Chat, Moments, Activity and Create Lobby remain explicitly labeled demos. Real lobby creation, joining, chat and Media are not implemented.
 
 ### Run Auth/Profile in Expo Web
 
@@ -77,8 +79,8 @@ Backend CORS defaults to no cross-origin permission. `CORS_ALLOWED_ORIGINS` acce
 
 ## Included screens
 
-- Home with your lobbies and nearby lobbies
-- Your lobbies: the full joined-lobby list, opened with View all
+- Home with real upcoming lobbies and a separate demo-membership section
+- Your lobbies · Demo: the full demo joined-lobby list, opened with View all
 - Search with live filtering of demo lobbies by name and venue
 - Chats with active and archived lobby rows, opened using the paper-plane button on Home
 - Mock lobby conversations with sample messages and a working local composer
@@ -100,13 +102,25 @@ Both languages are declared in the Expo native config. These native settings tak
 
 UI translations and localized demo content live in `src/i18n/translations.ts`. Future user-authored posts, names and lobby titles should remain as written, not be translated automatically.
 
-## Home interactions (demo)
+## Home: real catalog and read-only details
 
-Lobby cards show the original localized demo time and distance directly below the venue name, with a live `HH:MM:SS` countdown beneath. The schedule labels and distances are static mock data; the separate demo countdown is relative to app launch and does not reset when switching tabs. At zero, the countdown displays “Already started”.
+“Upcoming lobbies” / “Предстоящие лобби” loads only future PUBLISHED events, ordered by `startsAt ASC, id ASC`, in pages of 20. Refresh replaces the list; Load more appends the next cursor page. Loading, empty, error/retry and pagination-error states never substitute demo records. There is no geographic search or fabricated distance.
 
-Tap a card in “Your lobbies” to open that lobby's conversation directly, without a preview popup. Back returns to Home. Nearby lobby cards still open their description popup: Join updates local membership and the participant count, and adds the lobby to “Your lobbies” and the chat list; Decline, the close button, tapping outside, or Android Back simply dismisses the popup. Joining is a local demo only and resets on a full app reload. No server requests or notifications are sent.
+Titles and descriptions are literal user-authored text, not translation keys. Schedule labels use the event's IANA `timeZone`; countdowns use the absolute ISO `startsAt` and do not restart on rerender. Images are category placeholders until Media is available. Counts include JOINED members only, and a membership badge identifies the current user's JOINED membership. The group gauge averages real JOINED users' extroversion scores, rounds to the nearest 0.5 (ties upward), and is hidden for an empty group. It is a group aggregate, not invented sample data.
 
-“View all” opens a separate “Your lobbies” page with the same joined memberships as Home, including newly joined demo lobbies. Full-width cards show the venue, schedule, countdown and participant count. A card opens its existing conversation; Back from that conversation returns to the full list, and Back from the list returns to Home. The list stays mounted under the conversation so its scroll position is preserved. The Home section sits directly below the top icon row with compact spacing.
+Tap a real card to fetch read-only details from `/lobbies/:id`. Join and Chat are explicitly disabled; real ids never enter demo joining or mock conversations. A published past event remains viewable by id, but unpublished/missing details show an unavailable state. Lists/details discard late results after logout, account switch or a newer load. The authenticated app tree and local demo conversations reset on account switch.
+
+Cursor pages are not a database snapshot: events may start or be edited between requests; Refresh obtains a fresh catalog. Existing seed events may already be in the past, so an empty catalog can be correct. Do not reseed/reset an existing database to populate Home: use isolated future test lobbies with known ids, and remove only those fixtures afterward.
+
+For browser smoke testing, sign in at the Expo Web URL above, check the real list and details, then the empty state with no future published fixtures. Temporarily stop only the local API, press Refresh to see an error, restart it and press Retry. The separate demo section should remain labeled and never replace the real list.
+
+## Home demo tools
+
+Only demo cards retain localized sample schedules/distances and a countdown relative to app launch. These are separate from real event timestamps.
+
+Tap a card in “Your lobbies · Demo” to open its mock conversation directly. Search results open the demo preview, where Join updates only local demo membership and chat lists. This never joins a real lobby, sends notifications or calls a Lobby mutation endpoint. Demo membership resets on reload, logout or account switch.
+
+“View all” opens “Your lobbies · Demo” with the same demo memberships. A card opens its mock conversation; Back returns to the full list, then Home. The demo section sits below the real catalog and is never merged into it.
 
 Home has a compact header with a white magnifying glass on a dark circular background at the top left, and the existing Chats button at the right. Search opens a separate page with live filtering of demo lobbies by localized name and venue. Empty input shows all lobbies; the clear button resets the query, and an empty state handles unmatched searches. Result cards open the existing lobby preview within the same native modal, with local demo joining. Back or a left-edge swipe returns to Home. Search uses no backend or persistent storage.
 

@@ -43,7 +43,7 @@ export function ChatsScreen({ active = true, onClose, scrollGesture, onOpenChat 
           >
             <Feather name="chevron-left" size={25} color={colors.text} />
           </Pressable>
-          <Text accessibilityRole="header" style={styles.title}>{t('chats.title')}</Text>
+          <Text accessibilityRole="header" style={styles.title}>{t('chats.title')} · {t('lobbies.demo')}</Text>
         </View>
 
         <View testID="chats-list" style={styles.groups}>

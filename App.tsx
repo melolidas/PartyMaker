@@ -75,8 +75,8 @@ function PartyMaker() {
       case 'profile':
         return <ProfileScreen />;
       default:
-        // Home mounts fresh after Create, so its feed reloads in server order.
-        return <HomeScreen initialLobbyId={createdLobbyId} onInitialLobbyConsumed={consumeCreatedLobby} />;
+        // Home mounts fresh after Create: both independent scopes reload in server order.
+        return <HomeScreen initialLobbyId={createdLobbyId} onInitialLobbyConsumed={consumeCreatedLobby} onCreate={() => navigate('create')} />;
     }
   }, [navigate, previousRoute, route, createdLobbyId, handleCreated, consumeCreatedLobby]);
 

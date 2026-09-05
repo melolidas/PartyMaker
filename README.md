@@ -32,7 +32,7 @@ The frontend now uses these backend endpoints through one typed API client:
 - `GET /users/me`
 - `PATCH /users/me`
 - `PUT /users/me/extroversion`
-- `GET /lobbies?limit=20&after=<opaque-cursor>`
+- `GET /lobbies?scope=all|mine&limit=20&after=<opaque-cursor>`
 - `GET /lobbies/:id`
 - `POST /lobbies`
 
@@ -54,7 +54,7 @@ If reconciliation temporarily fails, use **Retry recovery / Повторить �
 
 **Restart limitation:** a timeout is an in-memory safety boundary, not proof of durable invalidation. Pending/unknown persistent records are not restored, and a new runtime never clears them merely because its WeakMap is empty. However, if a delayed `committed` write physically completes while revocation/tombstone writes are unavailable, a new runtime can observe matching committed credentials. Without confirmed durable cleanup (or confirmed server revocation), absence of session restoration after restart cannot be guaranteed. The regression suite explicitly covers this limit. If the process dies with an unresolved pending writer and no terminal proof, recovery cannot safely unlock it automatically. No extra markers are added to claim a stronger guarantee.
 
-Profile name, bio, city, country code, and extroversion level are backed by `/users/me`. Home's upcoming catalog, lobby details and Create Lobby use PostgreSQL through the same authenticated ApiClient. Avatar, gallery, stats, demo memberships, Search, Chat, Moments and Activity remain explicitly labeled demos. Real joining/leaving, chat, editing/deleting lobbies and Media are not implemented.
+Profile name, bio, city, country code, and extroversion level are backed by `/users/me`. Home's upcoming catalog, Your lobbies / View all, lobby details and Create Lobby use PostgreSQL through the same authenticated ApiClient. Avatar, gallery, stats, Search, Chat, Moments and Activity remain explicitly labeled demos. Real joining/leaving, chat, editing/deleting lobbies and Media are not implemented.
 
 ### Run Auth/Profile in Expo Web
 
@@ -80,8 +80,8 @@ Backend CORS defaults to no cross-origin permission. `CORS_ALLOWED_ORIGINS` acce
 
 ## Included screens
 
-- Home with real upcoming lobbies and a separate demo-membership section
-- Your lobbies · Demo: the full demo joined-lobby list, opened with View all
+- Home with independent real upcoming catalog and personal upcoming lobbies
+- Your lobbies / View all: a paginated real list of the current user's upcoming JOINED memberships
 - Search with live filtering of demo lobbies by name and venue
 - Chats with active and archived lobby rows, opened using the paper-plane button on Home
 - Mock lobby conversations with sample messages and a working local composer
@@ -113,13 +113,23 @@ Tap a real card to fetch read-only details from `/lobbies/:id`. Join and Chat ar
 
 Cursor pages are not a database snapshot: events may start or be edited between requests; Refresh obtains a fresh catalog. Existing seed events may already be in the past, so an empty catalog can be correct. Do not reseed/reset an existing database to populate Home: use isolated future test lobbies with known ids, and remove only those fixtures afterward.
 
-For browser smoke testing, sign in at the Expo Web URL above, check the real list and details, then the empty state with no future published fixtures. Temporarily stop only the local API, press Refresh to see an error, restart it and press Retry. The separate demo section should remain labeled and never replace the real list.
+For browser smoke testing, sign in at the Expo Web URL above, check the real list and details, then the empty state with no future published fixtures. Temporarily stop only the local API, press Refresh to see an error, restart it and press Retry. The separate demo search/chat tools should remain labeled and never replace the real list.
+
+## Your lobbies: real upcoming participation
+
+Home's compact personal section and the full “View all” screen each request `GET /lobbies?scope=mine` through the same authenticated ApiClient. The server requires PUBLISHED, future startsAt and a JOINED LobbyMember belonging to the Bearer user. Organizer participation is the membership created atomically by POST, not an organizerId shortcut. LEFT/REMOVED, unpublished and past events are excluded. No userId/organizerId selector is accepted.
+
+Mine is not filtered from the first all page: an event far beyond that page still appears in the personal query. Each list owns its items, cursor, loading/error state and request generation; refreshing or paging one does not append to or fail the other. Both use pages of 20 with stable startsAt/id order. Home offers Refresh, View all and Load more; the full screen offers Refresh and Load more. The empty state offers Create lobby. No loaded-row count is presented as a total.
+
+Personal cards open the same real read-only details, never a mock chat. Group counts and mean extroversion still use **all** JOINED members. Returning from View all reloads Home's lists; returning after successful creation also reloads both scopes and opens the new id even if absent from their first pages. Logout/account switch discards list state and late reload/page results. No demo fallback exists.
+
+Browser regression: create an isolated lobby → Home personal section → View all → details → logout/relogin → verify membership persists. Sign in as a different isolated user: the lobby may appear in all, but not mine without their own JOINED membership. Also test the empty/Create state and Refresh → error → Retry by temporarily stopping only the local API. Use known fixture ids; never reset/reseed or modify pre-existing records. Joining/leaving, completed-event history, editing/deleting, real chats/search and Media remain unavailable.
 
 ## Create a real lobby
 
 Use the central + button. Enter title, description, category, date (`YYYY-MM-DD`), 24-hour time (`HH:MM`), capacity and meeting format. In-person events require a venue name; online events send `venueName: null`. The form explicitly uses **Asia/Bishkek (UTC+06:00)**, not the device/computer timezone. It checks the calendar and round-trips the named timezone, rejecting impossible dates such as February 30 rather than normalizing them. Photos, maps and geocoding are visibly unavailable; no demo photo is preselected.
 
-Submission uses the existing ApiClient/session and a synchronous double-submit lock. The server atomically creates a PUBLISHED lobby and one ORGANIZER/JOINED membership for the authenticated user. You occupy one capacity slot. A confirmed 201 returns to Home, reloads the server-sorted catalog and opens details by the returned id—even if that event is beyond the first page. The real id never enters demo membership or conversations.
+Submission uses the existing ApiClient/session and a synchronous double-submit lock. The server atomically creates a PUBLISHED lobby and one ORGANIZER/JOINED membership for the authenticated user. You occupy one capacity slot. A confirmed 201 returns to Home, reloads both independent server-sorted lists (all and mine) and opens details by the returned id—even if that event is beyond the first page. The real id never enters demo membership or conversations.
 
 Errors preserve the draft while the form stays mounted. An ambiguous network/server/response error warns that creation might already have committed: **check Home before manually submitting again**. There is no automatic POST retry for those errors and no idempotency key in this stage; a deliberate repeated request can create a duplicate. The existing bounded refresh/retry after an explicit `401 INVALID_ACCESS_TOKEN` remains enabled. Closing the form discards its local draft. Logout/account switch/unmount invalidates late UI callbacks; the server may already have created the old account's lobby, but its late response cannot navigate or populate the new account's UI.
 
@@ -127,19 +137,19 @@ For browser smoke testing, create a uniquely named test lobby, verify Home → d
 
 ## Home demo tools
 
-The demo membership section is not the list of lobbies created through the API. Real created lobbies appear in the upcoming catalog according to server sorting, with a real JOINED membership badge.
+Home's personal section and View all are real API data, not demo memberships. The old demo-list path inside ChatsModal is separate; Home does not navigate real cards or ids into it.
 
 Only demo cards retain localized sample schedules/distances and a countdown relative to app launch. These are separate from real event timestamps.
 
-Tap a card in “Your lobbies · Demo” to open its mock conversation directly. Search results open the demo preview, where Join updates only local demo membership and chat lists. This never joins a real lobby, sends notifications or calls a Lobby mutation endpoint. Demo membership resets on reload, logout or account switch.
+Only demo chat rows open mock conversations. Search results open the demo preview, where Join updates only local demo membership and chat lists. This never joins a real lobby, sends notifications or calls a Lobby mutation endpoint. Demo membership resets on reload, logout or account switch.
 
-“View all” opens “Your lobbies · Demo” with the same demo memberships. A card opens its mock conversation; Back returns to the full list, then Home. The demo section sits below the real catalog and is never merged into it.
+Home's “View all” opens PersonalLobbiesScreen and fetches scope=mine; it does not open ChatsModal or its legacy YourLobbiesScreen demo list.
 
 Home has a compact header with a white magnifying glass on a dark circular background at the top left, and the existing Chats button at the right. Search opens a separate page with live filtering of demo lobbies by localized name and venue. Empty input shows all lobbies; the clear button resets the query, and an empty state handles unmatched searches. Result cards open the existing lobby preview within the same native modal, with local demo joining. Back or a left-edge swipe returns to Home. Search uses no backend or persistent storage.
 
 ## Chats (demo)
 
-The white paper-plane button on Home opens a full-screen chat list; the Chats header contains only Back and its title, without a duplicate paper-plane icon. It starts with “Beer tonight” and “CS2 squad”, using the same lobby photos and member counts as Home. Joining another lobby adds a chat row; event start times do not remove existing rows. Tap any active or archived row to open its mock conversation. Back from a conversation opened this way returns to the list; opening from Home's “Your lobbies” skips the list, so Back returns directly to Home.
+The white paper-plane button on Home opens a full-screen chat list; the Chats header contains only Back and its title, without a duplicate paper-plane icon. It starts with “Beer tonight” and “CS2 squad”, using demo photos and member counts, independent of real Home memberships. Joining another lobby adds a chat row; event start times do not remove existing rows. Tap any active or archived row to open its mock conversation. Back from a conversation opened this way returns to the list. Home's real “Your lobbies” never opens a mock conversation.
 
 Chats are grouped below two label-free 16px status markers without divider lines: a red dot with a visible size/brightness pulse and outward wave for active memberships, and a still grey dot for inactive demo chats (a past cinema night and hike). The status labels remain available to screen readers. Reduce Motion uses a slower brightness-only pulse: bright red for most of the cycle with a brief, clearly visible dip, without scaling or travelling waves. Animation pauses in the background and stops when the screen closes. Historical fixtures have separate ids and do not add Home memberships; starting an event alone does not mark its chat inactive.
 

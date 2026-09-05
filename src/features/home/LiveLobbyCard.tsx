@@ -17,10 +17,10 @@ const categories: Record<LobbyCategory, { label: TranslationKey; icon: keyof typ
   OUTDOORS: { label: 'category.outdoors', icon: 'map' },
 };
 
-export function LobbyCategoryPlaceholder({ category }: { category: LobbyCategory }) {
+export function LobbyCategoryPlaceholder({ category, compact = false }: { category: LobbyCategory; compact?: boolean }) {
   const { t } = useI18n();
   const info = categories[category];
-  return <View testID="lobby-category-placeholder" style={styles.placeholder}>
+  return <View testID="lobby-category-placeholder" style={[styles.placeholder, compact && styles.compactPlaceholder]}>
     <Feather name={info.icon} color={colors.muted} size={26} />
     <Text style={styles.category}>{t(info.label)}</Text>
   </View>;
@@ -39,10 +39,10 @@ export function LiveLobbyMetadata({ lobby }: { lobby: Lobby }) {
   </View>;
 }
 
-export function LiveLobbyCard({ lobby, onPress }: { lobby: Lobby; onPress: () => void }) {
+export function LiveLobbyCard({ lobby, onPress, compact = false }: { lobby: Lobby; onPress: () => void; compact?: boolean }) {
   const { t } = useI18n();
-  return <Pressable testID={`live-lobby-${lobby.id}`} accessibilityRole="button" accessibilityLabel={lobby.title} accessibilityHint={t('lobbies.readOnly')} onPress={onPress} style={({ pressed }) => [styles.card, pressed && styles.pressed]}>
-    <LobbyCategoryPlaceholder category={lobby.category} />
+  return <Pressable testID={`live-lobby-${lobby.id}`} accessibilityRole="button" accessibilityLabel={lobby.title} accessibilityHint={t('lobbies.readOnly')} onPress={onPress} style={({ pressed }) => [styles.card, compact && styles.compactCard, pressed && styles.pressed]}>
+    <LobbyCategoryPlaceholder category={lobby.category} compact={compact} />
     <View style={styles.body}>
       <View style={styles.titleRow}>
         <Text style={styles.title}>{lobby.title}</Text>
@@ -54,6 +54,8 @@ export function LiveLobbyCard({ lobby, onPress }: { lobby: Lobby; onPress: () =>
 }
 
 const styles = StyleSheet.create({
+  compactCard: { width: 174, flexDirection: 'column' },
+  compactPlaceholder: { width: '100%', height: 84, minHeight: 84 },
   card: { flexDirection: 'row', borderRadius: radius.medium, borderColor: colors.border, borderWidth: 1, backgroundColor: colors.surface, overflow: 'hidden' },
   placeholder: { width: 92, minHeight: 100, backgroundColor: colors.surfaceRaised, alignItems: 'center', justifyContent: 'center', gap: 8, padding: 8 },
   category: { color: colors.muted, fontSize: 10, textAlign: 'center' },

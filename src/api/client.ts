@@ -1,5 +1,5 @@
 import { getApiBaseUrl } from './config';
-import type { CreateLobbyInput, Lobby, LobbyPage } from './lobbyTypes';
+import type { CreateLobbyInput, Lobby, LobbyPage, LobbyScope } from './lobbyTypes';
 import {
   ApiClientError,
   createApiConfigurationError,
@@ -170,9 +170,9 @@ export class ApiClient {
     return this.protectedRequest<UserProfile>('/users/me', { method: 'GET' });
   }
 
-  listLobbies(after?: string): Promise<LobbyPage> {
+  listLobbies(after?: string, scope: LobbyScope = 'all'): Promise<LobbyPage> {
     const query = after === undefined ? '' : `&after=${encodeURIComponent(after)}`;
-    return this.protectedRequest<LobbyPage>(`/lobbies?limit=20${query}`, { method: 'GET' });
+    return this.protectedRequest<LobbyPage>(`/lobbies?limit=20&scope=${scope}${query}`, { method: 'GET' });
   }
 
   getLobby(id: string): Promise<Lobby> {

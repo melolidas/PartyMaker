@@ -17,9 +17,10 @@ export type Lobby = {
 };
 
 export type LobbyPage = { items: Lobby[]; nextCursor: string | null };
+export type LobbyScope = 'all' | 'mine';
 export type CreateLobbyInput = Pick<Lobby, 'title' | 'description' | 'category' | 'startsAt' | 'timeZone' | 'capacity' | 'isOnline' | 'venueName'>;
 export type LobbyApi = LobbyReadApi & { createLobby: (input: CreateLobbyInput) => Promise<Lobby> };
 export type LobbyReadApi = {
-  listLobbies: (after?: string) => Promise<LobbyPage>;
+  listLobbies: (after?: string, scope?: LobbyScope) => Promise<LobbyPage>;
   getLobby: (id: string) => Promise<Lobby>;
 };

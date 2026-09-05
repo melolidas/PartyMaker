@@ -150,17 +150,18 @@ Successful register, login, and refresh requests return:
 
 Passwords are hashed with Argon2id. Refresh tokens are random opaque values; only their SHA-256 hashes are stored. Access JWTs contain `sub` (user id) and `sid` (session id). Logout revokes refresh for the current session; an access token already issued for it remains valid until its short TTL expires.
 
-## Lobby API: catalog, details and creation
+## Lobby API: catalog, personal upcoming list, details and creation
 
 All three endpoints require the existing Bearer access-token guard. Swagger documents their DTOs and validation errors; no database schema change is needed.
 
 - `GET /api/v1/lobbies?limit=20&after=<cursor>` returns `{ "items": [...], "nextCursor": "..." }` (or `null` for the last page). `limit` is an integer from 1 to 50, default 20. `after` is the opaque keyset cursor returned by the preceding page; malformed cursors return `400 VALIDATION_FAILED`. Cursor dates must be canonical UTC ISO timestamps with a four-digit AD year (0001–9999); extended years such as `+275760` are rejected before Prisma rather than producing 500.
 - The catalog includes only `PUBLISHED` events with `startsAt > now`, sorted by `startsAt ASC, id ASC`. Equal timestamps use id as the stable tie-breaker. Each request evaluates the current time; pages are not a frozen snapshot of concurrent event edits.
+- `scope=all|mine` is optional, default `all` (unchanged catalog). `GET /api/v1/lobbies?scope=mine&limit=20&after=<cursor>` adds a JOINED membership filter for the Bearer user, still restricted to future PUBLISHED events. Organizer participation comes through the actual membership created with POST; organizerId alone is insufficient. LEFT/REMOVED, past and unpublished events are excluded. Invalid scope or userId/organizerId query parameters return `400 VALIDATION_FAILED`; clients cannot select another user's list. Pagination is independent of all, with the same tuple ordering and bounds. No total count is returned.
 - `GET /api/v1/lobbies/:id` returns a published lobby, including a past published event. Missing, draft, cancelled or completed lobbies return `404 LOBBY_NOT_FOUND`; malformed UUIDs return validation error 400.
 
 The explicit response projection contains only `id`, `title`, `description`, `category`, `startsAt` (absolute ISO timestamp), `timeZone`, `isOnline`, `venueName` (null for online events), `capacity`, `joinedCount`, `isJoined`, and `groupExtroversionLevel`. No participant lists, emails, credential hashes, raw tokens, coordinates or internal media storage keys are exposed. LEFT and REMOVED memberships do not count and do not set `isJoined`.
 
-The group score is `round(sum(JOINED users' extroversionScoreX2) / joinedCount) / 2`: mean level rounded to the nearest half-level, with positive ties upward. It is null when no JOINED users exist. The client hides an absent score and uses category placeholders instead of exposing internal media paths. No distance is claimed without geographic search.
+The group score is `round(sum(JOINED users' extroversionScoreX2) / joinedCount) / 2`: mean level rounded to the nearest half-level, with positive ties upward. It is null when no JOINED users exist. In mine, both count and score still use **all** JOINED members, not only the requesting user. The client hides an absent score and uses category placeholders instead of exposing internal media paths. No distance is claimed without geographic search.
 
 ### POST /api/v1/lobbies
 
@@ -177,7 +178,7 @@ Returns **201** with the same safe Lobby DTO. Required JSON fields:
 
 The authenticated user supplies `organizerId` implicitly through the guard. The server sets `status=PUBLISHED` and `minParticipants=2`. Unknown/internal fields (`organizerId`, `status`, `members`, `id`, media, etc.) return `400 VALIDATION_FAILED`, as do invalid inputs. A nested Prisma create atomically inserts the lobby and exactly one organizer membership (`role=ORGANIZER`, `status=JOINED`); a child-insert failure rolls back the lobby. The response immediately reports `joinedCount=1`, `isJoined=true` and the organizer's real group score.
 
-POST has no idempotency key or automatic network retry. A lost response can mean the record was already saved; inspect the catalog before explicitly resubmitting. The frontend only retries after a definite guard rejection (`401 INVALID_ACCESS_TOKEN`) using its existing refresh mechanism. Joining/leaving, personal lobby lists, editing/deleting and Media remain out of scope.
+POST has no idempotency key or automatic network retry. A lost response can mean the record was already saved; inspect the catalog or personal list before explicitly resubmitting. The frontend only retries after a definite guard rejection (`401 INVALID_ACCESS_TOKEN`) using its existing refresh mechanism. Home and View all now show real upcoming participation. Joining/leaving, completed-event history, editing/deleting and Media remain out of scope.
 
 `npm test` includes database-backed Lobby tests using isolated random-UUID fixtures, cleaned up by their own ids; it never resets or reseeds the database. The seed updates fixed records, so do not rerun it just to refresh Home dates in an existing database. Existing past seed events correctly produce an empty upcoming catalog. For a manual smoke test, create isolated future PUBLISHED fixtures with known ids and clean up only those fixtures; see the root README for list/details/empty/error-retry steps.
 

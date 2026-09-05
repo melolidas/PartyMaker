@@ -60,7 +60,7 @@ function host(auth) {
     const mocks = {
       react,
       'react/jsx-runtime': { jsx, jsxs: jsx, Fragment: 'Fragment' },
-      'react-native': { ...native, StyleSheet: { create: v => v }, Platform: { OS: 'web', select: v => v.web } },
+      'react-native': { ...native, StyleSheet: { create: v => v }, Platform: { OS: 'web', select: v => v.web }, BackHandler: { addEventListener: () => ({ remove() {} }) } },
       '@expo/vector-icons': { Feather: 'Feather' },
       '../../auth/AuthProvider': { useAuth: () => auth },
       '../../i18n/LocalizationProvider': { useI18n: () => ({ t: createTranslator('ru'), language: 'ru' }) },
@@ -377,7 +377,7 @@ test('actual Create screen ignores late callbacks after an account switch or unm
   }
 });
 
-test('actual App creation callback navigates Home and Home opens the returned id independently of catalog page', () => {
+test('actual App creation callback navigates Home, reloads both scopes and opens the returned id independently of catalog page', async () => {
   const h = host({});
   const components = Object.fromEntries(['ActivityScreen','AuthScreen','CreateLobbyScreen','HomeScreen','MomentsScreen','ProfileScreen'].map(name => ['./src/screens/'+name, {[name]:name,AuthLoadingScreen:'AuthLoadingScreen'}]));
   const {PartyMaker} = h.load('App.tsx', {
@@ -406,12 +406,22 @@ test('actual App creation callback navigates Home and Home opens the returned id
     '../features/home/LobbyCountdown':{LobbyCountdown:'LobbyCountdown'},
     '../features/home/LiveLobbyFeed':{LiveLobbyFeed:'LiveLobbyFeed'},
     '../features/home/LiveLobbyDetails':{LiveLobbyDetails:'LiveLobbyDetails'},
+    './PersonalLobbiesScreen':{PersonalLobbiesScreen:'PersonalLobbiesScreen'},
     '../features/home/lobbies':{demoLobbies:[],getJoinedLobbies:()=>[]},
     '../features/search/SearchModal':{SearchModal:'SearchModal'},
   });
   const tree = homeHost.render(HomeScreen,home.props);
   assert.equal(nodes(tree).find(n=>n.type==='LiveLobbyDetails').props.id,lobby.id);
   assert.ok(nodes(tree).find(n=>n.type==='LiveLobbyFeed'),'Fresh feed mounted; no synthetic insertion/reordering');
+  const calls = [];
+  for (const feed of nodes(tree).filter(n=>n.type==='LiveLobbyFeed')) {
+    const feedHost = host({status:'authenticated', user:{id:'A'}, lobbyApi:{listLobbies:async (after,scope)=>{calls.push({after,scope});return page([lobby]);}}});
+    const {LiveLobbyFeed} = feedHost.load('src/features/home/LiveLobbyFeed.tsx');
+    feedHost.render(LiveLobbyFeed,feed.props); await flush();
+    assert.equal(nodes(feedHost.render(LiveLobbyFeed,feed.props)).find(n=>n.type==='LiveLobbyCard').props.lobby.id,lobby.id);
+    feedHost.unmount();
+  }
+  assert.deepEqual(calls,[{after:undefined,scope:'all'},{after:undefined,scope:'mine'}]);
   assert.equal(nodes(render()).find(n=>n.type==='HomeScreen').props.initialLobbyId,null,'Navigation intent consumed, not reopened on later visits');
   homeHost.unmount();h.unmount();
 });
@@ -421,6 +431,130 @@ function creationClient(handler) {
   return new ApiClient({baseUrl:()=> 'http://api.test/api/v1',refreshTokenStorage:{async get(){return token;},async set(v){token=v;},async clear(){token=null;}},fetchImpl:handler});
 }
 const authReply = (n, userId = 'A') => new Response(JSON.stringify({user:{id:userId},accessToken:'access-'+n,refreshToken:'refresh-'+n}));
+
+test('mine feed loading/empty/create/error/retry never substitutes demo records', async () => {
+  let next = deferred(); const calls=[]; let creates=0;
+  const h=host({status:'authenticated',user:{id:'A'},lobbyApi:{listLobbies:(after,scope)=>{calls.push({after,scope});return next.promise;}}});
+  const {LiveLobbyFeed}=h.load('src/features/home/LiveLobbyFeed.tsx');
+  const render=()=>h.render(LiveLobbyFeed,{scope:'mine',onSelect(){},onCreate(){creates++;}});
+  assert.ok(byId(render(),'mine-lobbies-loading'));
+  next.resolve(page()); await flush();
+  assert.match(texts(byId(render(),'mine-lobbies-empty')),/Создайте/);
+  assert.equal(texts(byId(render(),'mine-create-lobby')),'Создать лобби');
+  byId(render(),'mine-create-lobby').props.onPress(); assert.equal(creates,1);
+  next=deferred();button(render(),'Обновить').props.onPress(); next.reject(new Error('offline'));await flush();
+  assert.ok(byId(render(),'mine-lobbies-error'));
+  assert.equal(nodes(render()).filter(n=>n.type==='LiveLobbyCard').length,0);
+  next=deferred();button(render(),'Попробовать снова').props.onPress();
+  next.resolve(page([{...lobby,title:'Real personal title',isJoined:true}]));await flush();
+  assert.equal(nodes(render()).find(n=>n.type==='LiveLobbyCard').props.lobby.title,'Real personal title');
+  assert.ok(calls.every(call=>call.scope==='mine'));h.unmount();
+});
+
+test('all and mine have independent loading, errors, refresh and cursors; pagination retry uses mine cursor', async () => {
+  const calls=[];const responses={all:deferred(),mine:deferred()};
+  const auth={status:'authenticated',user:{id:'A'},lobbyApi:{listLobbies:(after,scope)=>{calls.push({after,scope});return responses[scope].promise;}}};
+  const allHost=host(auth),mineHost=host(auth);
+  const allFeed=allHost.load('src/features/home/LiveLobbyFeed.tsx').LiveLobbyFeed;
+  const mineFeed=mineHost.load('src/features/home/LiveLobbyFeed.tsx').LiveLobbyFeed;
+  const all=()=>allHost.render(allFeed,{onSelect(){}});
+  const mine=()=>mineHost.render(mineFeed,{scope:'mine',onSelect(){}});
+  all();mine();
+  responses.all.resolve(page([{...lobby,id:'foreign',isJoined:false}],'all-cursor'));await flush();
+  assert.ok(byId(mine(),'mine-lobbies-loading'));
+  responses.mine.resolve(page([{...lobby,id:'own',isJoined:true}],'mine-cursor'));await flush();
+  responses.mine=deferred();
+  const press=byId(mine(),'mine-lobbies-load-more').props.onPress;press();press();
+  assert.deepEqual(calls.at(-1),{after:'mine-cursor',scope:'mine'});
+  assert.equal(calls.length,3);
+  assert.equal(byId(all(),'lobbies-load-more').props.disabled,false);
+  responses.mine.reject(new Error('pagination offline'));await flush();
+  assert.ok(byId(mine(),'mine-lobbies-error'));assert.equal(byId(all(),'lobbies-error'),undefined);
+  responses.mine=deferred();button(mine(),'Попробовать снова').props.onPress();
+  responses.mine.resolve(page([{...lobby,id:'own-next',isJoined:true}]));await flush();
+  assert.deepEqual(nodes(mine()).filter(n=>n.type==='LiveLobbyCard').map(n=>n.props.lobby.id),['own','own-next']);
+  assert.deepEqual(nodes(all()).filter(n=>n.type==='LiveLobbyCard').map(n=>n.props.lobby.id),['foreign']);
+  responses.mine=deferred();button(mine(),'Обновить').props.onPress();
+  assert.deepEqual(calls.at(-1),{after:undefined,scope:'mine'});
+  assert.equal(nodes(mine()).filter(n=>n.type==='LiveLobbyCard').length,0);
+  assert.ok(byId(all(),'lobbies-load-more'));
+  responses.mine.resolve(page());await flush();allHost.unmount();mineHost.unmount();
+});
+
+test('mine drops late reload and page responses after logout/account switch, including the first render', async () => {
+  for(const mode of ['reload','page']) for(const account of [null,'B']) {
+    let next=Promise.resolve(page([{...lobby,title:'A only'}],'next'));
+    const auth={status:'authenticated',user:{id:'A'},lobbyApi:{listLobbies:()=>next}};
+    const h=host(auth);const {LiveLobbyFeed}=h.load('src/features/home/LiveLobbyFeed.tsx');
+    const render=()=>h.render(LiveLobbyFeed,{scope:'mine',onSelect(){}});
+    render();await flush();
+    const late=deferred();next=late.promise;
+    if(mode==='reload')button(render(),'Обновить').props.onPress();
+    else byId(render(),'mine-lobbies-load-more').props.onPress();
+    next=Promise.resolve(page([{...lobby,title:'B only'}]));
+    auth.user=account?{id:account}:null;auth.status=account?'authenticated':'unauthenticated';
+    assert.equal(nodes(render()).filter(n=>n.type==='LiveLobbyCard').length,0);
+    await flush();late.resolve(page([{...lobby,title:'Late A'}]));await flush();
+    assert.deepEqual(nodes(render()).filter(n=>n.type==='LiveLobbyCard').map(n=>n.props.lobby.title),account?['B only']:[]);
+    h.unmount();
+  }
+});
+
+const personalScreenMocks = auth => ({
+  ...screenMocks(auth),
+  '../features/home/LiveLobbyFeed':{LiveLobbyFeed:'LiveLobbyFeed'},
+  '../features/home/LiveLobbyDetails':{LiveLobbyDetails:'LiveLobbyDetails'},
+});
+
+test('Home View all opens real personal route and personal cards open LiveLobbyDetails, never a conversation', () => {
+  const h=host({});
+  const {HomeScreen}=h.load('src/screens/HomeScreen.tsx',{
+    ...personalScreenMocks({}),
+    '@expo-google-fonts/outfit/600SemiBold':{Outfit_600SemiBold:{}},'expo-font':{useFonts:()=>[true]},
+    '../components/icons/PartyIcon':{PartyIcon:'PartyIcon'},
+    '../features/chats/ChatsModal':{ChatsModal:'ChatsModal'},
+    '../features/search/SearchModal':{SearchModal:'SearchModal'},
+    './PersonalLobbiesScreen':{PersonalLobbiesScreen:'PersonalLobbiesScreen'},
+  });
+  let creates=0;const render=()=>h.render(HomeScreen,{onCreate(){creates++;}});
+  const mine=nodes(render()).find(n=>n.type==='LiveLobbyFeed'&&n.props.scope==='mine');
+  assert.equal(mine.props.compact,true);
+  mine.props.onSelect(lobby.id);
+  assert.equal(nodes(render()).find(n=>n.type==='LiveLobbyDetails').props.id,lobby.id);
+  assert.equal(nodes(render()).find(n=>n.type==='ChatsModal'),undefined);
+  nodes(render()).find(n=>n.type==='LiveLobbyDetails').props.onClose();
+  mine.props.onViewAll();
+  const route=render();assert.equal(route.type,'PersonalLobbiesScreen');
+  const fullHost=host({});const {PersonalLobbiesScreen}=fullHost.load('src/screens/PersonalLobbiesScreen.tsx',personalScreenMocks({}));
+  const full=()=>fullHost.render(PersonalLobbiesScreen,route.props);
+  const feed=nodes(full()).find(n=>n.type==='LiveLobbyFeed');
+  assert.equal(feed.props.scope,'mine');assert.equal(feed.props.compact,undefined);
+  feed.props.onCreate();assert.equal(creates,1);
+  feed.props.onSelect(lobby.id);assert.equal(nodes(full()).find(n=>n.type==='LiveLobbyDetails').props.id,lobby.id);
+  assert.equal(nodes(full()).find(n=>n.type==='ChatsModal'),undefined);
+  byId(full(),'personal-lobbies-back').props.onPress();
+  assert.ok(nodes(render()).find(n=>n.type==='LiveLobbyFeed'));
+  for(const file of ['src/screens/HomeScreen.tsx','src/screens/PersonalLobbiesScreen.tsx']) {
+    assert.doesNotMatch(readFileSync(path.join(__dirname,'..',file),'utf8'),/demoLobbies|joinDemoLobby|getJoinedLobbies|initialLobby:|listPage:|onOpenChat/);
+  }
+  fullHost.unmount();h.unmount();
+});
+
+test('ApiClient sends explicit scope and separate opaque cursor through the same Bearer session', async () => {
+  const calls=[];const client=creationClient(async (url,options)=>{
+    if(url.endsWith('/auth/login'))return authReply(1);
+    calls.push({url,authorization:options.headers.Authorization});
+    return new Response(JSON.stringify(page()));
+  });
+  await client.login({email:'a@example.test',password:'test-only'});
+  await client.listLobbies();await client.listLobbies(undefined,'mine');await client.listLobbies('mine+/cursor','mine');
+  assert.deepEqual(calls.map(c=>c.url),[
+    'http://api.test/api/v1/lobbies?limit=20&scope=all',
+    'http://api.test/api/v1/lobbies?limit=20&scope=mine',
+    'http://api.test/api/v1/lobbies?limit=20&scope=mine&after=mine%2B%2Fcursor',
+  ]);
+  assert.ok(calls.every(c=>c.authorization==='Bearer access-1'));
+});
 
 test('POST uses existing Bearer refresh-on-401 exactly once, but never retries an ambiguous network/500/JSON failure', async () => {
   for (const mode of ['401','network','500','json']) {

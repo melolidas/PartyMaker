@@ -79,6 +79,8 @@ export class LobbiesService {
     const rows = await this.prisma.lobby.findMany({
       where: {
         status: 'PUBLISHED', startsAt: { gt: new Date() },
+        // Filter lobby visibility, not the members selected for whole-group statistics.
+        ...(query.scope === 'mine' ? { members: { some: { userId, status: 'JOINED' as const } } } : {}),
         ...(cursor ? { OR: [
           { startsAt: { gt: new Date(cursor.startsAt) } },
           { startsAt: new Date(cursor.startsAt), id: { gt: cursor.id } },

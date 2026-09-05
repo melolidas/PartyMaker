@@ -25,6 +25,84 @@ const later = '2200-01-01T11:00:00.000Z';
 const cursorBefore = Buffer.from(JSON.stringify({ startsAt: '2200-01-01T09:59:59.999Z', id: randomUUID() })).toString('base64url');
 const mediaId = randomUUID();
 
+test('mine uses the Bearer membership and preserves whole-group statistics and the safe DTO', async () => {
+  const own = await request(app.getHttpServer()).get('/api/v1/lobbies').query({ scope: 'mine' }).auth(access, { type: 'bearer' }).expect(200);
+  const dto = (own.body as LobbyPageResponseDto).items.find((item) => item.id === sorted[0]);
+  assert.ok(dto);
+  assert.equal(dto.joinedCount, 2);
+  assert.equal(dto.groupExtroversionLevel, 1.5);
+  assert.equal(dto.isJoined, true);
+  assert.deepEqual(Object.keys(dto).sort(), ['id', 'title', 'description', 'category', 'startsAt', 'timeZone', 'isOnline', 'venueName', 'capacity', 'joinedCount', 'isJoined', 'groupExtroversionLevel'].sort());
+  assert.doesNotMatch(JSON.stringify(own.body), /passwordHash|tokenHash|refreshToken|storageKey|@example\.test/);
+  assert.ok(!(own.body as LobbyPageResponseDto).items.some((item) => item.id === sorted[1]), 'organizerId alone is not membership');
+
+  const left = await request(app.getHttpServer()).get('/api/v1/lobbies').query({ scope: 'mine' }).auth(leftAccess, { type: 'bearer' }).expect(200);
+  assert.deepEqual(left.body, { items: [], nextCursor: null });
+  const tokens = app.get(AuthTokenService);
+  const material = tokens.createRefreshToken();
+  const session = await prisma.authSession.create({ data: { userId: users[3]!, tokenHash: material.hash, expiresAt: material.expiresAt } });
+  const removedAccess = await tokens.signAccessToken(users[3]!, session.id);
+  const removed = await request(app.getHttpServer()).get('/api/v1/lobbies').query({ scope: 'mine' }).auth(removedAccess, { type: 'bearer' }).expect(200);
+  assert.deepEqual(removed.body, { items: [], nextCursor: null });
+});
+
+test('mine excludes past, draft, cancelled and completed events even with JOINED memberships', async () => {
+  await prisma.lobbyMember.createMany({ data: ids.slice(3).map((lobbyId) => ({ lobbyId, userId: users[0]!, status: 'JOINED' as const })) });
+  const response = await request(app.getHttpServer()).get('/api/v1/lobbies').query({ scope: 'mine', limit: 50 }).auth(access, { type: 'bearer' }).expect(200);
+  const rows = (response.body as LobbyPageResponseDto).items;
+  assert.ok(rows.length > 0);
+  assert.ok(rows.every((item) => !ids.slice(3).some((id) => item.id === id) && Date.parse(item.startsAt) > Date.now()));
+});
+
+test('created organizer appears in mine through exactly one JOINED membership, not in another user list', async () => {
+  const created = await post(createInput()).expect(201);
+  const own = await request(app.getHttpServer()).get('/api/v1/lobbies').query({ scope: 'mine', limit: 50 }).auth(access, { type: 'bearer' }).expect(200);
+  assert.deepEqual((own.body as LobbyPageResponseDto).items.find((item) => item.id === created.body.id), created.body);
+  const foreign = await request(app.getHttpServer()).get('/api/v1/lobbies').query({ scope: 'mine' }).auth(leftAccess, { type: 'bearer' }).expect(200);
+  assert.ok(!(foreign.body as LobbyPageResponseDto).items.some((item) => item.id === created.body.id));
+  assert.equal(await prisma.lobbyMember.count({ where: { lobbyId: created.body.id as string, role: 'ORGANIZER', status: 'JOINED' } }), 1);
+});
+
+test('mine has stable tuple pages at equal startsAt, independently of the first all page', async () => {
+  const personalIds = [randomUUID(), randomUUID(), randomUUID()].sort();
+  for (const id of personalIds) await prisma.lobby.create({ data: {
+    id, organizerId: users[0]!, title: 'Isolated personal pagination', description: 'Membership, not ownership',
+    category: 'SPORT', startsAt: '2400-01-01T12:00:00.000Z', timeZone: 'UTC', capacity: 6,
+    status: 'PUBLISHED', isOnline: true,
+    members: { create: { userId: users[2]!, status: 'JOINED', role: 'MEMBER' } },
+  } });
+  const general = await request(app.getHttpServer()).get('/api/v1/lobbies').query({ scope: 'all', limit: 1, after: cursorBefore }).auth(leftAccess, { type: 'bearer' }).expect(200);
+  assert.equal(general.body.items[0].id, sorted[0]);
+  assert.equal(general.body.items[0].isJoined, false);
+  const seen: string[] = [];
+  let after: string | null = null;
+  for (let page = 0; page < 3; page += 1) {
+    const response = await request(app.getHttpServer()).get('/api/v1/lobbies')
+      .query({ scope: 'mine', limit: 1, ...(after ? { after } : {}) }).auth(leftAccess, { type: 'bearer' }).expect(200);
+    const result = response.body as LobbyPageResponseDto;
+    assert.equal(result.items.length, 1);
+    assert.equal(result.items[0]?.isJoined, true);
+    seen.push(result.items[0]!.id);
+    after = result.nextCursor;
+    assert.equal(after === null, page === 2);
+  }
+  assert.deepEqual(seen, personalIds);
+});
+
+test('invalid scope and attempts to choose a different user or organizer are rejected', async () => {
+  for (const query of [{ scope: 'invalid' }, { scope: '' }, { scope: 'MINE' }, { scope: ['all', 'mine'] },
+    { scope: 'mine', userId: users[2] }, { scope: 'mine', organizerId: users[2] }]) {
+    const response = await request(app.getHttpServer()).get('/api/v1/lobbies').query(query).auth(access, { type: 'bearer' }).expect(400);
+    assert.equal(response.body.error.code, 'VALIDATION_FAILED');
+  }
+});
+
+test('explicit all and omitted scope preserve the identical catalog contract', async () => {
+  const implicit = await request(app.getHttpServer()).get('/api/v1/lobbies').query({ after: cursorBefore }).auth(access, { type: 'bearer' }).expect(200);
+  const explicit = await request(app.getHttpServer()).get('/api/v1/lobbies').query({ scope: 'all', after: cursorBefore }).auth(access, { type: 'bearer' }).expect(200);
+  assert.deepEqual(explicit.body, implicit.body);
+});
+
 before(async () => {
   const module = await Test.createTestingModule({ imports: [AppModule] }).compile();
   app = module.createNestApplication();
@@ -72,8 +150,8 @@ after(async () => {
   await app?.close();
 });
 
-test('both Lobby endpoints require Bearer authentication', async () => {
-  for (const path of ['/api/v1/lobbies', `/api/v1/lobbies/${ids[0]}`]) {
+test('both Lobby endpoints and mine scope require Bearer authentication', async () => {
+  for (const path of ['/api/v1/lobbies', '/api/v1/lobbies?scope=mine', `/api/v1/lobbies/${ids[0]}`]) {
     const response = await request(app.getHttpServer()).get(path).expect(401);
     assert.equal(response.body.error.code, 'INVALID_ACCESS_TOKEN');
     await request(app.getHttpServer()).get(path).auth('invalid', { type: 'bearer' }).expect(401);
@@ -158,7 +236,9 @@ test('Swagger documents safe Lobby DTOs, pagination and Bearer protection', asyn
   const parameters = response.body.paths['/api/v1/lobbies'].get.parameters as {
     name: string; in: string; required: boolean; schema: Record<string, unknown>;
   }[];
-  assert.deepEqual(parameters.map((parameter) => parameter.name).sort(), ['after', 'limit']);
+  assert.deepEqual(parameters.map((parameter) => parameter.name).sort(), ['after', 'limit', 'scope']);
+  assert.deepEqual(parameters.find((parameter) => parameter.name === 'scope')?.schema.enum, ['all', 'mine']);
+  assert.equal(parameters.find((parameter) => parameter.name === 'scope')?.schema.default, 'all');
   const limit = parameters.find((parameter) => parameter.name === 'limit')!;
   assert.equal(limit.in, 'query');
   assert.equal(limit.required, false);
@@ -187,7 +267,7 @@ test('unsupported cursor years return VALIDATION_FAILED before Prisma and preser
     const after = Buffer.from(JSON.stringify({ startsAt, id: '00000000-0000-4000-8000-000000000000' })).toString('base64url');
     const response = await request(app.getHttpServer()).get('/api/v1/lobbies').query({ after }).auth(access, { type: 'bearer' }).expect(400);
     assert.equal(response.body.error.code, 'VALIDATION_FAILED');
-    await assert.rejects(forbiddenPrisma.list({ limit: 20, after }, users[0]!), { status: 400 });
+    await assert.rejects(forbiddenPrisma.list({ limit: 20, after, scope: 'all' }, users[0]!), { status: 400 });
   }
 });
 

@@ -1,0 +1,11 @@
+node_modules/
+dist/
+.test-dist/
+coverage/
+.env
+.env.*
+!.env.example
+uploads/
+.local-postgres/
+*.tsbuildinfo
+npm-debug.log*

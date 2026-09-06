@@ -1,0 +1,291 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum LobbyCategory {
+  DRINKS
+  GAMING
+  FOOD
+  SPORT
+  MOVIES
+  OUTDOORS
+}
+
+enum LobbyStatus {
+  DRAFT
+  PUBLISHED
+  COMPLETED
+  CANCELLED
+}
+
+enum LobbyMemberRole {
+  ORGANIZER
+  MEMBER
+}
+
+enum LobbyMemberStatus {
+  JOINED
+  LEFT
+  REMOVED
+}
+
+enum MediaKind {
+  IMAGE
+}
+
+enum MomentVisibility {
+  PUBLIC
+  FOLLOWERS
+}
+
+enum InviteStatus {
+  PENDING
+  ACCEPTED
+  DECLINED
+  CANCELLED
+}
+
+enum NotificationType {
+  LOBBY_JOINED
+  LOBBY_CANCELLED
+  MOMENT_COMMENTED
+  MOMENT_LIKED
+  LOBBY_INVITED
+}
+
+model User {
+  id                  String   @id @default(uuid()) @db.Uuid
+  email               String   @unique @db.VarChar(320)
+  passwordHash        String   @map("password_hash") @db.VarChar(255)
+  handle              String   @unique @db.VarChar(30)
+  displayName         String   @map("display_name") @db.VarChar(80)
+  bio                 String?  @db.VarChar(300)
+  city                String?  @db.VarChar(100)
+  countryCode         String?  @map("country_code") @db.Char(2)
+  avatarMediaId       String?  @unique @map("avatar_media_id") @db.Uuid
+  /// Integer 2..20; REST maps it to level 1.0..10.0 in 0.5 steps.
+  extroversionScoreX2 Int      @default(11) @map("extroversion_score_x2")
+  createdAt           DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt           DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  avatar              MediaAsset?     @relation("UserAvatar", fields: [avatarMediaId], references: [id], onDelete: SetNull)
+  media               MediaAsset[]    @relation("MediaOwner")
+  sessions            AuthSession[]
+  organizedLobbies    Lobby[]         @relation("LobbyOrganizer")
+  lobbyMemberships    LobbyMember[]
+  moments             Moment[]
+  momentLikes         MomentLike[]
+  momentComments      MomentComment[]
+  messages            LobbyMessage[]
+  following           Follow[]        @relation("FollowFrom")
+  followers           Follow[]        @relation("FollowTo")
+  sentInvites         LobbyInvite[]   @relation("InviteSender")
+  receivedInvites     LobbyInvite[]   @relation("InviteRecipient")
+  notifications       Notification[]  @relation("NotificationRecipient")
+  notificationActions Notification[]  @relation("NotificationActor")
+}
+
+model AuthSession {
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @map("user_id") @db.Uuid
+  tokenHash String    @unique @map("token_hash") @db.VarChar(255)
+  expiresAt DateTime  @map("expires_at") @db.Timestamptz(3)
+  revokedAt DateTime? @map("revoked_at") @db.Timestamptz(3)
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, expiresAt])
+}
+
+model MediaAsset {
+  id          String        @id @default(uuid()) @db.Uuid
+  ownerId     String        @map("owner_id") @db.Uuid
+  kind        MediaKind     @default(IMAGE)
+  storageKey  String        @unique @map("storage_key") @db.VarChar(255)
+  mimeType    String        @map("mime_type") @db.VarChar(100)
+  width       Int?
+  height      Int?
+  bytes       Int
+  createdAt   DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+  owner       User          @relation("MediaOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  avatarFor   User?         @relation("UserAvatar")
+  lobbyMedia  LobbyMedia[]
+  momentMedia MomentMedia[]
+}
+
+model Lobby {
+  id              String         @id @default(uuid()) @db.Uuid
+  organizerId     String         @map("organizer_id") @db.Uuid
+  title           String         @db.VarChar(40)
+  description     String         @db.VarChar(200)
+  category        LobbyCategory?
+  status          LobbyStatus    @default(PUBLISHED)
+  isOnline        Boolean        @default(false) @map("is_online")
+  venueName       String?        @map("venue_name") @db.VarChar(140)
+  address         String?        @db.VarChar(240)
+  latitude        Decimal?       @db.Decimal(9, 6)
+  longitude       Decimal?       @db.Decimal(9, 6)
+  startsAt        DateTime       @map("starts_at") @db.Timestamptz(3)
+  timeZone        String         @default("Asia/Bishkek") @map("time_zone") @db.VarChar(64)
+  minParticipants Int            @default(2) @map("min_participants")
+  capacity        Int
+  createdAt       DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime       @updatedAt @map("updated_at") @db.Timestamptz(3)
+  organizer       User           @relation("LobbyOrganizer", fields: [organizerId], references: [id], onDelete: Restrict)
+  members         LobbyMember[]
+  media           LobbyMedia[]
+  messages        LobbyMessage[]
+  moments         Moment[]
+  invites         LobbyInvite[]
+  notifications   Notification[]
+
+  @@index([status, startsAt])
+  @@index([organizerId, status])
+}
+
+model LobbyMember {
+  lobbyId  String            @map("lobby_id") @db.Uuid
+  userId   String            @map("user_id") @db.Uuid
+  role     LobbyMemberRole   @default(MEMBER)
+  status   LobbyMemberStatus @default(JOINED)
+  joinedAt DateTime          @default(now()) @map("joined_at") @db.Timestamptz(3)
+  leftAt   DateTime?         @map("left_at") @db.Timestamptz(3)
+  lobby    Lobby             @relation(fields: [lobbyId], references: [id], onDelete: Cascade)
+  user     User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([lobbyId, userId])
+  @@index([userId, status])
+}
+
+model LobbyMedia {
+  lobbyId  String     @map("lobby_id") @db.Uuid
+  mediaId  String     @map("media_id") @db.Uuid
+  position Int        @default(0)
+  isCover  Boolean    @default(false) @map("is_cover")
+  lobby    Lobby      @relation(fields: [lobbyId], references: [id], onDelete: Cascade)
+  media    MediaAsset @relation(fields: [mediaId], references: [id], onDelete: Restrict)
+
+  @@id([lobbyId, mediaId])
+  @@unique([lobbyId, position])
+}
+
+model LobbyMessage {
+  id        String    @id @default(uuid()) @db.Uuid
+  lobbyId   String    @map("lobby_id") @db.Uuid
+  authorId  String    @map("author_id") @db.Uuid
+  body      String    @db.VarChar(2000)
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  editedAt  DateTime? @map("edited_at") @db.Timestamptz(3)
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(3)
+  lobby     Lobby     @relation(fields: [lobbyId], references: [id], onDelete: Cascade)
+  author    User      @relation(fields: [authorId], references: [id], onDelete: Restrict)
+
+  @@index([lobbyId, createdAt, id])
+}
+
+model LobbyInvite {
+  id          String       @id @default(uuid()) @db.Uuid
+  lobbyId     String       @map("lobby_id") @db.Uuid
+  inviterId   String       @map("inviter_id") @db.Uuid
+  inviteeId   String       @map("invitee_id") @db.Uuid
+  status      InviteStatus @default(PENDING)
+  createdAt   DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
+  respondedAt DateTime?    @map("responded_at") @db.Timestamptz(3)
+  lobby       Lobby        @relation(fields: [lobbyId], references: [id], onDelete: Cascade)
+  inviter     User         @relation("InviteSender", fields: [inviterId], references: [id], onDelete: Cascade)
+  invitee     User         @relation("InviteRecipient", fields: [inviteeId], references: [id], onDelete: Cascade)
+
+  @@unique([lobbyId, inviteeId])
+  @@index([inviteeId, status])
+}
+
+model Moment {
+  id            String           @id @default(uuid()) @db.Uuid
+  authorId      String           @map("author_id") @db.Uuid
+  lobbyId       String?          @map("lobby_id") @db.Uuid
+  caption       String           @db.VarChar(1000)
+  visibility    MomentVisibility @default(PUBLIC)
+  createdAt     DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt     DateTime         @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt     DateTime?        @map("deleted_at") @db.Timestamptz(3)
+  author        User             @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  lobby         Lobby?           @relation(fields: [lobbyId], references: [id], onDelete: SetNull)
+  media         MomentMedia[]
+  likes         MomentLike[]
+  comments      MomentComment[]
+  notifications Notification[]
+
+  @@index([createdAt, id])
+  @@index([authorId, createdAt])
+}
+
+model MomentMedia {
+  momentId String     @map("moment_id") @db.Uuid
+  mediaId  String     @map("media_id") @db.Uuid
+  position Int        @default(0)
+  moment   Moment     @relation(fields: [momentId], references: [id], onDelete: Cascade)
+  media    MediaAsset @relation(fields: [mediaId], references: [id], onDelete: Restrict)
+
+  @@id([momentId, mediaId])
+  @@unique([momentId, position])
+}
+
+model MomentLike {
+  momentId  String   @map("moment_id") @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  moment    Moment   @relation(fields: [momentId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([momentId, userId])
+}
+
+model MomentComment {
+  id            String         @id @default(uuid()) @db.Uuid
+  momentId      String         @map("moment_id") @db.Uuid
+  authorId      String         @map("author_id") @db.Uuid
+  body          String         @db.VarChar(500)
+  createdAt     DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
+  deletedAt     DateTime?      @map("deleted_at") @db.Timestamptz(3)
+  moment        Moment         @relation(fields: [momentId], references: [id], onDelete: Cascade)
+  author        User           @relation(fields: [authorId], references: [id], onDelete: Restrict)
+  notifications Notification[]
+
+  @@index([momentId, createdAt, id])
+}
+
+model Follow {
+  followerId  String   @map("follower_id") @db.Uuid
+  followingId String   @map("following_id") @db.Uuid
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  follower    User     @relation("FollowFrom", fields: [followerId], references: [id], onDelete: Cascade)
+  following   User     @relation("FollowTo", fields: [followingId], references: [id], onDelete: Cascade)
+
+  @@id([followerId, followingId])
+  @@index([followingId])
+}
+
+model Notification {
+  id          String           @id @default(uuid()) @db.Uuid
+  recipientId String           @map("recipient_id") @db.Uuid
+  actorId     String?          @map("actor_id") @db.Uuid
+  type        NotificationType
+  lobbyId     String?          @map("lobby_id") @db.Uuid
+  lobbyTitleSnapshot String?   @map("lobby_title_snapshot") @db.VarChar(40)
+  momentId    String?          @map("moment_id") @db.Uuid
+  commentId   String?          @map("comment_id") @db.Uuid
+  readAt      DateTime?        @map("read_at") @db.Timestamptz(3)
+  createdAt   DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
+  recipient   User             @relation("NotificationRecipient", fields: [recipientId], references: [id], onDelete: Cascade)
+  actor       User?            @relation("NotificationActor", fields: [actorId], references: [id], onDelete: SetNull)
+  lobby       Lobby?           @relation(fields: [lobbyId], references: [id], onDelete: Cascade)
+  moment      Moment?          @relation(fields: [momentId], references: [id], onDelete: Cascade)
+  comment     MomentComment?   @relation(fields: [commentId], references: [id], onDelete: Cascade)
+
+  @@index([recipientId, readAt, createdAt])
+}

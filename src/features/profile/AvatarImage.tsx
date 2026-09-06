@@ -6,7 +6,7 @@ import { useAuthenticatedAuth } from '../../auth/AuthProvider';
 import { useI18n } from '../../i18n/LocalizationProvider';
 import { colors } from '../../theme';
 
-export function AvatarImage({ avatar, size = 94 }: { avatar: Avatar | null; size?: number }) {
+export function AvatarImage({ avatar, size = 94, reloadKey }: { avatar: Avatar | null; size?: number; reloadKey?: string }) {
   const { user, getAvatarUrl, avatarReloadKey } = useAuthenticatedAuth();
   const { t } = useI18n();
   const [failed, setFailed] = useState<string | null>(null);
@@ -14,7 +14,8 @@ export function AvatarImage({ avatar, size = 94 }: { avatar: Avatar | null; size
   try {
     if (avatar) {
       url = getAvatarUrl(avatar.id);
-      if (avatarReloadKey) url += `?retry=${encodeURIComponent(avatarReloadKey)}`;
+      const retry = reloadKey ?? avatarReloadKey;
+      if (retry) url += `?retry=${encodeURIComponent(retry)}`;
     }
   } catch { /* Neutral fallback for unavailable API configuration. */ }
   const requestKey = `${user.id}:${url}`;

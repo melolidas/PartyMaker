@@ -6,6 +6,8 @@ import { LobbyMessagesController } from './lobby-messages.controller';
 import { LobbyMessagesService } from './lobby-messages.service';
 import { ChatsController } from '../chats/chats.controller';
 import { ChatsService } from '../chats/chats.service';
+import { LobbyMembersController } from './lobby-members.controller';
+import { LobbyMembersService } from './lobby-members.service';
 
-@Module({ imports: [AuthModule], controllers: [LobbiesController, LobbyMessagesController, ChatsController], providers: [LobbiesService, LobbyMessagesService, ChatsService] })
+@Module({ imports: [AuthModule], controllers: [LobbiesController, LobbyMessagesController, LobbyMembersController, ChatsController], providers: [LobbiesService, LobbyMessagesService, LobbyMembersService, ChatsService] })
 export class LobbiesModule {}

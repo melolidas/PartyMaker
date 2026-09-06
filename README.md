@@ -219,7 +219,7 @@ Only current JOINED participants can read/send. Missing/non-PUBLISHED: 404; outs
 
 Browser smoke: create an isolated lobby as organizer → join with a second test user → send as organizer → manually refresh as member and reply → reopen both chats to verify persistence → leave as member and verify access is unavailable. Use only known fixture ids for cleanup; never reset or reseed existing data. Physical-phone behavior must be verified separately; automated/native-compatible code is not a phone test.
 
-No attachments, reactions, read receipts, typing, message edit/delete, participant list, push or WebSocket is implemented.
+No attachments, reactions, read receipts, typing, message edit/delete, push or WebSocket is implemented. The read-only participant list is available separately from lobby details (below).
 
 ## Available chats (real inbox)
 
@@ -246,6 +246,16 @@ Both gesture builders explicitly set `.runOnJS(true)`. This app uses React Nativ
 To test this update in Expo Go, run `npm install`, restart Metro with `npx expo start --go --clear`, then choose Reload in Expo Go or reopen the project. The native gesture module is included in Expo Go; this change does not require a separate development build.
 
 Swipe left-to-right anywhere on the inbox to return to Home. Conversation back swipes start within the leftmost 28 points, leaving horizontal text selection in the composer available. The page follows the recognizer's full translation; a light swipe (about 15% of a phone's width) or a short quick flick goes back. A deliberately reversed or too-short drag settles back and can be interrupted by another swipe. Vertical scrolling and multi-touch do not dismiss the page. Back, Android Back, accessibility escape and Escape on web target the active page and preserve its entry-specific destination. Returning from a conversation dismisses the keyboard. Reduced Motion shortens gesture settling and avoids automatic full-screen sliding for button-based dismissal.
+
+## Real lobby participants
+
+Details → **Participants** opens a read-only page inside the same Modal. Back and system Back return to the same details; chat and cancellation keep their existing paths. Only current JOINED users can view it, including organizers and participants in already-started PUBLISHED events. Other users see an explanation instead of an enabled action.
+
+`GET /api/v1/lobbies/:id/members?limit=20&after=<cursor>` returns real names, handles, nullable processed avatars, organizer and “You” badges. Organizer is determined by the server's Lobby.organizerId; no demo profiles or participant totals are invented. Public avatar URLs use the existing API base and an opaque image-retry identifier, not account/lobby ids. Refresh retries failed images even if their media id is unchanged; it never reads `/users/me` per participant or alters the signed-in profile.
+
+The page has loading, empty, error/retry, Refresh and Load more. Refresh replaces page one and resets pagination; a next-page network error preserves rows/cursor for explicit retry. Rows deduplicate by user id. Shared lobby invalidation immediately removes old rows and rereads access. Any 403/404, including during pagination, hides rows and cursor, explains lost access and rechecks details directly without an invalidation loop. Late responses after refresh, close, account/lobby change or logout are ignored.
+
+Only manual refresh/reopening discovers external changes. Separate cursor pages are not a frozen snapshot. An authorized GET begun before leave/cancel may complete; this does not promise instant revocation of already received data. No invitations, removing members, organizer transfer, public user pages, participant search or realtime are included. Auth storage, Prisma schema and seed are unchanged. Browser verification does not substitute for testing on a physical phone.
 
 ## Checks
 

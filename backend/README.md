@@ -287,6 +287,16 @@ There is no global DB/filesystem atomicity. Disk/processing failure preserves th
 
 `npm test` includes real-DB avatar ownership, multipart/decoder/size validation, metadata stripping, processing/disk/DB failure, ambiguous commit and overlapping row-lock replacement checks. It verifies public access restrictions and avatar persistence across login/refresh/profile edits. Tests use isolated users and an injected temporary directory and remove only their own fixture records/files. The browser smoke workflow is documented in the root README; native-device verification is separate.
 
+## Read-only lobby participants
+
+`GET /api/v1/lobbies/:id/members?limit=20&after=<cursor>` requires Bearer and the current user's JOINED membership, even if they are Lobby.organizerId. PUBLISHED events include past startsAt. Missing/DRAFT/CANCELLED/COMPLETED return `404 LOBBY_NOT_FOUND`; outsiders/LEFT/REMOVED return `403 LOBBY_MEMBERS_FORBIDDEN`.
+
+Response: `{ items: [{ user: { id, displayName, handle, avatar }, isOrganizer, joinedAt }], nextCursor }`. Only JOINED rows are returned. `isOrganizer` compares Lobby.organizerId, not membership.role. The nullable avatar projection reuses `avatarSelect/toAvatar` with that participant's owner id and exposes only `{ id, width, height, mimeType }`. It is not the full UserResponseDto: no email, bio, location, extroversion, auth data or storage keys. Ordinary Lobby responses still do not embed participants.
+
+Limit is 1–50, default 20. `after` is an opaque base64url cursor containing canonical UTC joinedAt and UUID userId. Order: joinedAt ASC, userId ASC. Invalid UUID/limit/cursor and unknown query fields return `400 VALIDATION_FAILED`. Access, lobby/status filtering, ordering and limit+1 pagination run inside one RepeatableRead transaction. No read-side FOR UPDATE and no in-memory whole-roster sorting. A cursor never bypasses membership or lobby filtering.
+
+Each page shares an access/data snapshot, but separate pages are not frozen. External membership/profile changes require Refresh or reopening; an authorized read begun before leave/cancel may finish. Frontend observed 403/404 removes participant data and rechecks details. Existing models, schema and seed are unchanged. The PostgreSQL members e2e suite is included in `npm test` and uses only isolated fixture ids.
+
 ## Error response
 
 Every API error is normalized to this shape:

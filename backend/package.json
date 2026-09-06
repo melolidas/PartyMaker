@@ -11,7 +11,7 @@
     "start:prod": "node dist/main.js",
     "lint": "eslint \"{src,prisma,test}/**/*.ts\"",
     "typecheck": "tsc --noEmit",
-    "test": "tsc --project tsconfig.test.json --pretty false && node --test --test-concurrency=1 .test-dist/test/cors.test.js .test-dist/test/app.e2e.test.js .test-dist/test/auth-profile.e2e.test.js .test-dist/test/lobbies.e2e.test.js .test-dist/test/lobby-membership.e2e.test.js .test-dist/test/lobby-search.e2e.test.js .test-dist/test/lobby-messages.e2e.test.js .test-dist/test/chats.e2e.test.js .test-dist/test/lobby-cancel.e2e.test.js .test-dist/test/avatars.e2e.test.js",
+    "test": "tsc --project tsconfig.test.json --pretty false && node --test --test-concurrency=1 .test-dist/test/cors.test.js .test-dist/test/app.e2e.test.js .test-dist/test/auth-profile.e2e.test.js .test-dist/test/lobbies.e2e.test.js .test-dist/test/lobby-membership.e2e.test.js .test-dist/test/lobby-search.e2e.test.js .test-dist/test/lobby-messages.e2e.test.js .test-dist/test/chats.e2e.test.js .test-dist/test/lobby-cancel.e2e.test.js .test-dist/test/avatars.e2e.test.js .test-dist/test/lobby-members.e2e.test.js",
     "test:cors": "tsc --project tsconfig.test.json --pretty false && node --test .test-dist/test/cors.test.js",
     "prisma:generate": "prisma generate",
     "prisma:validate": "prisma validate",

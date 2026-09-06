@@ -1,3 +1,5 @@
+import type { Avatar } from './types';
+
 export type LobbyCategory = 'DRINKS' | 'GAMING' | 'FOOD' | 'SPORT' | 'MOVIES' | 'OUTDOORS';
 
 /** User-authored strings, never translation keys or demo ids. */
@@ -33,12 +35,19 @@ export type ChatSummary = {
   activityAt: string;
 };
 export type ChatPage = { items: ChatSummary[]; nextCursor: string | null };
+export type LobbyMember = {
+  user: { id: string; displayName: string; handle: string; avatar: Avatar | null };
+  isOrganizer: boolean;
+  joinedAt: string;
+};
+export type LobbyMemberPage = { items: LobbyMember[]; nextCursor: string | null };
 export type CancelLobbyResult = { id: string; status: 'CANCELLED' };
 export type LobbyChatApi = {
   listLobbyMessages: (id: string, before?: string) => Promise<LobbyMessagePage>;
   sendLobbyMessage: (id: string, input: SendLobbyMessageInput) => Promise<LobbyMessage>;
 };
 export type LobbyApi = LobbyReadApi & LobbyChatApi & {
+  listLobbyMembers: (id: string, after?: string) => Promise<LobbyMemberPage>;
   cancelLobby: (id: string) => Promise<CancelLobbyResult>;
   listChats: (after?: string) => Promise<ChatPage>;
   createLobby: (input: CreateLobbyInput) => Promise<Lobby>;

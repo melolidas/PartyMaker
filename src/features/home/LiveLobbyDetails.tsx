@@ -9,6 +9,7 @@ import { colors, radius } from '../../theme';
 import { LiveLobbyMetadata, LobbyCategoryPlaceholder } from './LiveLobbyCard';
 import { useHomeClock } from './HomeExperienceProvider';
 import { LiveLobbyChatScreen } from '../chats/LiveLobbyChatScreen';
+import { LiveLobbyMembersScreen } from './LiveLobbyMembersScreen';
 
 export function LiveLobbyDetails({ id, onClose, onCancelled }: { id: string; onClose: () => void; onCancelled?: () => void }) {
   const { lobbyApi, user, storageRecoveryRequired } = useAuth();
@@ -17,6 +18,8 @@ export function LiveLobbyDetails({ id, onClose, onCancelled }: { id: string; onC
   const account = storageRecoveryRequired ? null : user?.id ?? null;
   const [chat, setChat] = useState<{ account: string; id: string; title: string } | null>(null);
   const chatOpen = !!account && chat?.account === account && chat.id === id;
+  const [members, setMembers] = useState<{ account: string; id: string } | null>(null);
+  const membersOpen = !!account && members?.account === account && members.id === id;
   const store = useMemo(() => new LobbyDetailsStore(lobbyApi), [lobbyApi]);
   const snapshot = useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot);
   const notified = useRef(false);
@@ -25,6 +28,7 @@ export function LiveLobbyDetails({ id, onClose, onCancelled }: { id: string; onC
     store.setContext(account, id);
     notified.current = false;
     setChat(null);
+    setMembers(null);
     return () => { unsubscribe(); store.setContext(null, id); };
   }, [store, lobbyApi, account, id]);
   const current = snapshot.account === account && snapshot.id === id ? snapshot : emptyLobbyDetails(account, id);
@@ -36,11 +40,12 @@ export function LiveLobbyDetails({ id, onClose, onCancelled }: { id: string; onC
   const lobby = current.lobby;
   const intent = lobby ? membershipAction(lobby, now) : null;
   const busy = current.loading || current.mutating;
-  const backToDetails = () => { setChat(null); void store.reload(); };
-  return <Modal visible transparent animationType="fade" onRequestClose={chatOpen ? backToDetails : onClose}>
+  const backToDetails = () => { setChat(null); setMembers(null); void store.reload(); };
+  return <Modal visible transparent animationType="fade" onRequestClose={chatOpen || membersOpen ? backToDetails : onClose}>
     <View style={styles.overlay}>
-      <View style={[styles.sheet, chatOpen && styles.chatSheet]}>
-        {chatOpen ? <LiveLobbyChatScreen lobbyId={id} title={chat.title} onBack={backToDetails} onAccessLost={() => void store.reload()} /> : <>
+      <View style={[styles.sheet, (chatOpen || membersOpen) && styles.chatSheet]}>
+        {membersOpen ? <LiveLobbyMembersScreen lobbyId={id} onBack={backToDetails} onAccessLost={() => void store.reload()} />
+          : chatOpen ? <LiveLobbyChatScreen lobbyId={id} title={chat.title} onBack={backToDetails} onAccessLost={() => void store.reload()} /> : <>
         <View style={styles.header}><Text accessibilityRole="header" style={styles.title}>{current.cancelTarget?.title ?? lobby?.title ?? t('lobbies.details')}</Text>
           <Pressable accessibilityRole="button" accessibilityLabel={t('common.close')} onPress={onClose}><Text style={styles.close}>{t('common.close')}</Text></Pressable>
         </View>
@@ -84,6 +89,11 @@ export function LiveLobbyDetails({ id, onClose, onCancelled }: { id: string; onC
               </Pressable>
               {Date.parse(lobby.startsAt) <= now ? <Text testID="cancel-started" style={styles.muted}>{t('cancel.started')}</Text> : null}
             </> : null}
+            <Pressable testID="members-open" disabled={busy || !!current.error || !account || lobby.membershipStatus !== 'JOINED'} accessibilityRole="button"
+              onPress={account && !busy && !current.error && lobby.membershipStatus === 'JOINED' ? () => setMembers({ account, id }) : undefined} style={styles.action}>
+              <Text style={styles.close}>{t('members.title')}</Text>
+            </Pressable>
+            {lobby.membershipStatus !== 'JOINED' ? <Text testID="members-join-first" style={styles.muted}>{t('members.joinFirst')}</Text> : null}
             <Pressable testID="live-chat-open" disabled={busy || !!current.error || !account || lobby.membershipStatus !== 'JOINED'} accessibilityRole="button"
               accessibilityState={{ disabled: busy || !!current.error || !account || lobby.membershipStatus !== 'JOINED' }} style={styles.action}
               onPress={account && !busy && !current.error && lobby.membershipStatus === 'JOINED' ? () => setChat({ account, id, title: lobby.title }) : undefined}>

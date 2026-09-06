@@ -1,6 +1,14 @@
 import { AppLanguage } from './language';
 
 const en = {
+  'members.title': 'Participants',
+  'members.joinFirst': 'Only current participants can view this list. Join the lobby first.',
+  'members.accessLost': 'The participant list is no longer available. You may have left, or the lobby is unavailable.',
+  'members.error': 'Could not load participants. Please try again.',
+  'members.pageError': 'Could not load the next page. Your loaded participants are still shown.',
+  'members.empty': 'No participants to show. Refresh to check again.',
+  'members.organizer': 'Organizer',
+  'members.you': 'You',
   'cancel.action': 'Cancel lobby',
   'avatar.change': 'Change avatar',
   'avatar.label': 'Profile avatar',
@@ -333,6 +341,14 @@ export type TranslationKey = keyof typeof en;
 export type Translator = (key: TranslationKey) => string;
 
 const ru = {
+  'members.title': 'Участники',
+  'members.joinFirst': 'Список доступен только текущим участникам. Сначала вступите в лобби.',
+  'members.accessLost': 'Список участников больше недоступен. Возможно, вы вышли или лобби стало недоступно.',
+  'members.error': 'Не удалось загрузить участников. Попробуйте ещё раз.',
+  'members.pageError': 'Не удалось загрузить следующую страницу. Уже загруженные участники сохранены.',
+  'members.empty': 'Нет участников для отображения. Обновите список, чтобы проверить снова.',
+  'members.organizer': 'Организатор',
+  'members.you': 'Вы',
   'cancel.action': 'Отменить лобби',
   'avatar.change': 'Изменить аватар',
   'avatar.label': 'Аватар профиля',

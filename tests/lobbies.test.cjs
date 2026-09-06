@@ -18,6 +18,7 @@ const chatLogic = require('../.expo/lobby-tests/features/chats/liveLobbyChat.js'
 const { LiveLobbyChatStore } = chatLogic;
 const inboxLogic = require('../.expo/lobby-tests/features/chats/liveChatInbox.js');
 const scrollLogic = require('../.expo/lobby-tests/features/chats/liveChatScroll.js');
+const membersLogic = require('../.expo/lobby-tests/features/home/lobbyMembers.js');
 
 const lobby = {
   id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', title: 'demo.pizza', description: 'My own description <not markup>',
@@ -80,6 +81,9 @@ function host(auth) {
       '../../api/lobbyInvalidation': { getLobbyInvalidation },
       './lobbyDetails': detailsLogic,
       '../chats/LiveLobbyChatScreen': { LiveLobbyChatScreen: 'LiveLobbyChatScreen' },
+      './LiveLobbyMembersScreen': { LiveLobbyMembersScreen: 'LiveLobbyMembersScreen' },
+      './lobbyMembers': membersLogic,
+      '../profile/AvatarImage': { AvatarImage: 'AvatarImage' },
       './liveLobbyChat': chatLogic,
       './liveChatInbox': inboxLogic,
       './liveChatScroll': scrollLogic,
@@ -122,6 +126,147 @@ function texts(tree) {
   return tree && typeof tree === 'object' ? texts(tree.props?.children) : '';
 }
 const byId = (tree, id) => nodes(tree).find(n => n.props?.testID === id);
+const member = (id = 'A', organizer = false) => ({ user: { id, displayName: `Real <${id}>`, handle: `handle_${id}`, avatar: null }, isOrganizer: organizer, joinedAt: '2026-01-01T00:00:00.000Z' });
+function membersHost(api = {}) {
+  const auth = { user: { id: 'A' }, lobbyApi: { listLobbyMembers: async () => page(), ...api } };
+  let backs = 0, lost = 0, attempt = 0;
+  const h = host(auth);
+  const { LiveLobbyMembersScreen } = h.load('src/features/home/LiveLobbyMembersScreen.tsx', {
+    'expo-modules-core': { uuid: { v4: () => `00000000-0000-4000-8000-${String(++attempt).padStart(12, '0')}` } },
+  });
+  const props = { lobbyId: lobby.id, onBack() { backs++; }, onAccessLost() { lost++; } };
+  const render = () => h.render(LiveLobbyMembersScreen, props);
+  const list = () => byId(render(), 'members-list');
+  return { h, auth, props, render, list, rows: () => list().props.data, result: () => ({ backs, lost }) };
+}
+
+test('members actual screen loads, renders empty/error/retry and plain names, organizer/You badges without demo or total', async () => {
+  let next = deferred(); const c = membersHost({ listLobbyMembers: () => next.promise });
+  c.render(); assert.ok(byId(c.render(), 'members-loading')); assert.deepEqual(c.rows(), []);
+  next.resolve(page()); await flush(); assert.ok(byId(c.render(), 'members-empty'));
+  next = deferred(); byId(c.render(), 'members-refresh').props.onPress(); next.reject(Error('offline')); await flush();
+  assert.ok(byId(c.render(), 'members-error')); assert.deepEqual(c.rows(), []);
+  next = deferred(); byId(c.render(), 'members-retry').props.onPress(); next.resolve(page([member('A', true), member('B')])); await flush();
+  assert.equal(c.rows().length, 2);
+  const row = c.list().props.renderItem({ item: c.rows()[0] });
+  assert.match(texts(row), /Real <A>/); assert.match(texts(row), /@\s*handle_A/);
+  assert.match(texts(row), /Организатор/); assert.match(texts(row), /Вы/);
+  const second = c.list().props.renderItem({ item: c.rows()[1] }); assert.doesNotMatch(texts(second), /Организатор|Вы/);
+  assert.equal(nodes(row).find(n => n.type === 'AvatarImage').props.avatar, null);
+  assert.doesNotMatch(texts(c.render()), /демо|всего|найдено/i); c.h.unmount();
+});
+
+test('members page errors retain rows/cursor; retry is single-flight, deduplicates and Refresh replaces the page', async () => {
+  let next = Promise.resolve(page([member('A')], 'cursor')), calls = [];
+  const c = membersHost({ listLobbyMembers: (id, after) => { calls.push({ id, after }); return next; } });
+  c.render(); await flush(); const oldRevision = c.list().props.renderItem({ item: c.rows()[0] }).props.children[0].props.reloadKey;
+  const pending = deferred(); next = pending.promise;
+  const more = byId(c.list().props.ListFooterComponent, 'members-more').props.onPress; more(); more();
+  assert.equal(calls.length, 2); assert.equal(calls[1].after, 'cursor'); pending.reject(Error('offline')); await flush();
+  assert.deepEqual(c.rows().map(row => row.user.id), ['A']); assert.match(texts(byId(c.render(), 'members-error')), /следующую страницу/);
+  next = Promise.resolve(page([member('A'), member('B')], 'next')); byId(c.render(), 'members-retry').props.onPress(); await flush();
+  assert.equal(calls[2].after, 'cursor'); assert.deepEqual(c.rows().map(row => row.user.id), ['A', 'B']);
+  next = Promise.resolve(page([member('B')])); byId(c.render(), 'members-refresh').props.onPress();
+  assert.deepEqual(c.rows(), []); await flush(); assert.deepEqual(c.rows().map(row => row.user.id), ['B']);
+  assert.equal(calls.at(-1).after, undefined); assert.equal(c.list().props.ListFooterComponent, null);
+  const image = nodes(c.list().props.renderItem({ item: c.rows()[0] })).find(n => n.type === 'AvatarImage');
+  assert.notEqual(image.props.reloadKey, oldRevision); assert.match(image.props.reloadKey, /^[0-9a-f-]{36}$/);
+  assert.ok(!image.props.reloadKey.includes(lobby.id)); assert.equal(c.auth.user.avatar, undefined); c.h.unmount();
+});
+
+test('members 403/404 on initial, Refresh and Load more clear rows/cursor and notify access loss without reload loops', async () => {
+  for (const statusCode of [403, 404]) for (const phase of ['initial', 'refresh', 'page']) {
+    let denied = phase === 'initial', calls = 0;
+    const c = membersHost({ listLobbyMembers: async () => { calls++; if (denied) throw new ApiClientError({ statusCode, code: 'denied', message: 'denied' }); return page([member()], 'next'); } });
+    c.render(); await flush();
+    if (phase !== 'initial') {
+      assert.equal(c.rows().length, 1); denied = true;
+      if (phase === 'page') byId(c.list().props.ListFooterComponent, 'members-more').props.onPress();
+      else byId(c.render(), 'members-refresh').props.onPress();
+      await flush();
+    }
+    assert.deepEqual(c.rows(), []); assert.equal(c.list().props.ListFooterComponent, null);
+    assert.match(texts(byId(c.render(), 'members-error')), /больше недоступен/);
+    for (let i = 0; i < 4; i++) { c.render(); await flush(); }
+    assert.equal(c.result().lost, 1); assert.equal(calls, phase === 'initial' ? 1 : 2); c.h.unmount();
+  }
+});
+
+test('members shared invalidation hides page immediately, checks access and discards older pagination', async () => {
+  const old = deferred(); let calls = 0, denied = false;
+  const c = membersHost({ listLobbyMembers: async (_id, after) => {
+    calls++; if (after) return old.promise;
+    if (denied) throw new ApiClientError({ statusCode: 403, code: 'LOBBY_MEMBERS_FORBIDDEN', message: 'left' });
+    return page([member()], 'next');
+  } });
+  c.render(); await flush(); byId(c.list().props.ListFooterComponent, 'members-more').props.onPress();
+  denied = true; getLobbyInvalidation(c.auth.lobbyApi).invalidate(); assert.deepEqual(c.rows(), []);
+  await flush(); c.render(); old.resolve(page([member('old')], 'old-cursor')); await flush();
+  assert.deepEqual(c.rows(), []); assert.equal(c.list().props.ListFooterComponent, null); assert.equal(c.result().lost, 1); assert.equal(calls, 3);
+  c.h.unmount();
+});
+
+test('members stale reads after new Refresh, account/lobby change, logout, back and unmount never return old rows', async () => {
+  for (const transition of ['refresh', 'account', 'lobby', 'logout', 'back', 'unmount']) {
+    const old = deferred(); let calls = 0;
+    const c = membersHost({ listLobbyMembers: () => ++calls === 1 ? old.promise : Promise.resolve(page([member('new')])) });
+    c.render();
+    if (transition === 'refresh') getLobbyInvalidation(c.auth.lobbyApi).invalidate();
+    if (transition === 'account') { c.auth.user = { id: 'B' }; c.render(); }
+    if (transition === 'lobby') { c.props.lobbyId = 'different'; c.render(); }
+    if (transition === 'logout') { c.auth.user = null; c.render(); }
+    if (transition === 'back') byId(c.render(), 'members-back').props.onPress();
+    if (transition === 'unmount') c.h.unmount();
+    old.resolve(page([member('old')], 'old-cursor')); await flush();
+    assert.deepEqual(c.rows().map(row => row.user.id), ['refresh', 'account', 'lobby'].includes(transition) ? ['new'] : []);
+    c.h.unmount();
+  }
+  // Two reloads finish in reverse order; neither the old success nor error changes current data.
+  for (const reject of [false, true]) {
+    const first = deferred(), second = deferred(); let calls = 0;
+    const store = new membersLogic.LobbyMembersStore(() => ++calls === 1 ? first.promise : second.promise);
+    store.setContext('A', lobby.id); const newer = store.reload(); second.resolve(page([member('new')])); await newer;
+    if (reject) first.reject(new ApiClientError({ statusCode: 404, code: 'LOBBY_NOT_FOUND', message: 'old' }));
+    else first.resolve(page([member('old')]));
+    await flush(); assert.deepEqual(store.getSnapshot().items.map(row => row.user.id), ['new']); assert.equal(store.getSnapshot().error, null);
+  }
+});
+
+test('actual details -> members -> Back/system Back stays in one Modal and preserves chat/cancel paths', async () => {
+  const c = cancelHost(); c.render(); await flush();
+  for (const system of [false, true]) {
+    byId(c.render(), 'members-open').props.onPress();
+    const screen = nodes(c.render()).find(n => n.type === 'LiveLobbyMembersScreen'); assert.equal(screen.props.lobbyId, lobby.id);
+    assert.equal(nodes(c.render()).filter(n => n.type === 'Modal').length, 1);
+    if (system) nodes(c.render()).find(n => n.type === 'Modal').props.onRequestClose(); else screen.props.onBack();
+    await flush(); assert.equal(nodes(c.render()).find(n => n.type === 'LiveLobbyMembersScreen'), undefined);
+    assert.equal(texts(byId(c.render(), 'live-lobby-description')), lobby.description);
+  }
+  byId(c.render(), 'live-chat-open').props.onPress(); nodes(c.render()).find(n => n.type === 'LiveLobbyChatScreen').props.onBack(); await flush();
+  byId(c.render(), 'cancel-open').props.onPress(); assert.ok(byId(c.render(), 'cancel-confirmation')); byId(c.render(), 'cancel-decline').props.onPress();
+  assert.deepEqual(c.result(), { closes: 0, notices: 0 });
+  byId(c.render(), 'members-open').props.onPress();
+  c.auth.lobbyApi.getLobby = async () => ({ ...lobby, membershipStatus: 'LEFT' });
+  nodes(c.render()).find(n => n.type === 'LiveLobbyMembersScreen').props.onAccessLost(); await flush();
+  nodes(c.render()).find(n => n.type === 'Modal').props.onRequestClose(); await flush();
+  assert.equal(byId(c.render(), 'members-open').props.disabled, true); assert.ok(byId(c.render(), 'members-join-first')); c.h.unmount();
+});
+
+test('members transport uses current Bearer and encoded lobby/cursor with bounded auth refresh', async () => {
+  const calls = []; let refreshes = 0;
+  const client = creationClient(async (url, options) => {
+    if (url.endsWith('/auth/login')) return authReply(1);
+    if (url.endsWith('/auth/refresh')) { refreshes++; return authReply(2); }
+    calls.push({ url, options });
+    if (calls.length === 1) return new Response(JSON.stringify({ error: { code: 'INVALID_ACCESS_TOKEN', message: 'expired' } }), { status: 401 });
+    return new Response(JSON.stringify(page([member()])));
+  });
+  await client.login({ email: 'a@example.test', password: 'test-only' });
+  assert.equal((await client.listLobbyMembers(lobby.id, 'a/b+?=')).items[0].user.id, 'A');
+  assert.equal(refreshes, 1); assert.equal(calls.length, 2);
+  for (const call of calls) { const url = new URL(call.url); assert.equal(url.pathname, `/api/v1/lobbies/${lobby.id}/members`); assert.equal(url.searchParams.get('after'), 'a/b+?='); assert.equal(url.searchParams.get('limit'), '20'); }
+  assert.equal(new Headers(calls[1].options.headers).get('Authorization'), 'Bearer access-2');
+});
 const button = (tree, label) => nodes(tree).find(n => n.props?.accessibilityRole === 'button' && texts(n) === label);
 
 const cancelledReceipt = () => ({ id: lobby.id, status: 'CANCELLED' });

@@ -104,6 +104,21 @@ test('actual avatar image uses configured public URL, neutral missing/error fall
   assert.ok(h.find(render({...avatar,id:'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'}),'profile-avatar-image'));
 });
 
+test('member-local opaque image retry recovers same id without changing profile retry or reading users/me',()=>{
+  const auth={user:profile,avatarReloadKey:'profile-attempt',getAvatarUrl:id=>`http://api.test/api/v1/media/avatars/${id}`};
+  const h=host(auth);const {AvatarImage}=h.load('src/features/profile/AvatarImage.tsx');
+  let reloadKey='00000000-0000-4000-8000-000000000001';
+  const render=()=>h.render(()=>AvatarImage({avatar,reloadKey}));
+  const old=h.find(render(),'profile-avatar-image'); old.props.onError();
+  for(let i=0;i<3;i++)assert.ok(h.find(render(),'profile-avatar-placeholder'));
+  reloadKey='00000000-0000-4000-8000-000000000002';
+  const fresh=h.find(render(),'profile-avatar-image'); assert.equal(new URL(fresh.props.source.uri).searchParams.get('retry'),reloadKey);
+  assert.ok(!fresh.props.source.uri.includes(profile.id)); old.props.onError(); assert.ok(h.find(render(),'profile-avatar-image'));
+  fresh.props.onError();assert.ok(h.find(render(),'profile-avatar-placeholder'));
+  reloadKey='00000000-0000-4000-8000-000000000003';assert.ok(h.find(render(),'profile-avatar-image'));
+  assert.equal(auth.avatarReloadKey,'profile-attempt'); h.unmount();
+});
+
 test('manual same-id retry reloads profile/editor/nav images; failures never auto-loop or affect another account',async()=>{
   const auth={user:{...profile,avatar},avatarReloadKey:'',getAvatarUrl:id=>`http://api.test/api/v1/media/avatars/${id}`};
   // Three actual independent AvatarImage instances, just as Profile, editor and BottomNav mount them.

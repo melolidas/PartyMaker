@@ -189,6 +189,10 @@ export class ApiClient {
     return this.protectedRequest<Lobby>(`/lobbies/${encodeURIComponent(id)}`, { method: 'GET' });
   }
 
+  listLobbyRecommendations(): Promise<{ items: Lobby[] }> {
+    return this.protectedRequest<{ items: Lobby[] }>('/lobbies/recommendations', { method: 'GET' });
+  }
+
   listLobbyMessages(id: string, before?: string): Promise<LobbyMessagePage> {
     const query = before === undefined ? '' : `&before=${encodeURIComponent(before)}`;
     return this.protectedRequest<LobbyMessagePage>(`/lobbies/${encodeURIComponent(id)}/messages?limit=30${query}`, { method: 'GET' });

@@ -7,7 +7,7 @@ import type { AuthContext } from '../auth/types/access-token.types';
 import { ApiErrorResponseDto } from '../common/dto/api-error-response.dto';
 import { ListLobbiesQueryDto } from './dto/list-lobbies-query.dto';
 import { CreateLobbyRequestDto } from './dto/create-lobby-request.dto';
-import { LobbyPageResponseDto, LobbyResponseDto } from './dto/lobby-response.dto';
+import { LobbyPageResponseDto, LobbyResponseDto, LobbyRecommendationsResponseDto } from './dto/lobby-response.dto';
 import { LobbiesService } from './lobbies.service';
 import { CancelLobbyResponseDto } from './dto/cancel-lobby-response.dto';
 import { UpdateLobbyRequestDto } from './dto/update-lobby-request.dto';
@@ -94,6 +94,14 @@ export class LobbiesController {
   @ApiExtraModels(ListLobbiesQueryDto)
   list(@Query() query: ListLobbiesQueryDto, @CurrentAuth() auth: AuthContext): Promise<LobbyPageResponseDto> {
     return this.lobbies.list(query, auth.userId);
+  }
+
+  @Get('recommendations')
+  @ApiOperation({ summary: 'Up to five upcoming lobbies similar to your choices', description: 'No query/body fields. Latest 50 JOINED choices (not own organized lobbies): PUBLISHED, or already-started COMPLETED. Nearest 200 future PUBLISHED candidates with free places and no membership of any status for the Bearer user. Unique normalized RU/EN words in title/description; maximum Jaccard against one choice; positive scores only, then startsAt ASC/id ASC. One RepeatableRead snapshot. Lexical prototype, not semantic AI: no category/geography, stemming or translation. Availability is rechecked at actual join.' })
+  @ApiOkResponse({ type: LobbyRecommendationsResponseDto })
+  recommendations(@CurrentAuth() auth: AuthContext, @Body() body: unknown, @Query() query: Record<string, unknown>): Promise<LobbyRecommendationsResponseDto> {
+    this.assertEmptyBody(body); this.assertEmptyBody(query);
+    return this.lobbies.recommendations(auth.userId);
   }
 
   @Get(':id')

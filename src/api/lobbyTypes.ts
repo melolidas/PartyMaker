@@ -22,6 +22,7 @@ export type Lobby = {
 };
 
 export type LobbyPage = { items: Lobby[]; nextCursor: string | null };
+export type LobbyRecommendations = { items: Lobby[] };
 /** Recorded JOINED participation by start time, not verified attendance/completion. */
 export type LobbyHistoryItem = Pick<Lobby, 'id' | 'title' | 'description' | 'category' | 'startsAt' | 'timeZone' | 'isOnline' | 'venueName' | 'isOrganizer'>;
 export type LobbyHistoryPage = { items: LobbyHistoryItem[]; nextCursor: string | null };
@@ -54,6 +55,7 @@ export type LobbyChatApi = {
 };
 // Lobby-related Activity shares the existing authenticated transport/context.
 export type LobbyApi = LobbyReadApi & LobbyChatApi & NotificationsApi & {
+  listLobbyRecommendations: () => Promise<LobbyRecommendations>;
   listLobbyHistory: (after?: string) => Promise<LobbyHistoryPage>;
   updateLobby: (id: string, input: UpdateLobbyInput) => Promise<Lobby>;
   listLobbyMembers: (id: string, after?: string) => Promise<LobbyMemberPage>;

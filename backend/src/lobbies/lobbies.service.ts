@@ -5,7 +5,8 @@ import { isUUID } from 'class-validator';
 import { PrismaService } from '../prisma/prisma.service';
 import type { ListLobbiesQueryDto } from './dto/list-lobbies-query.dto';
 import type { CreateLobbyRequestDto } from './dto/create-lobby-request.dto';
-import type { LobbyPageResponseDto, LobbyResponseDto } from './dto/lobby-response.dto';
+import type { LobbyPageResponseDto, LobbyResponseDto, LobbyRecommendationsResponseDto } from './dto/lobby-response.dto';
+import { recommendedIds } from './lobby-recommendations';
 import { parseLobbyInstant } from './lobby-instant';
 import type { CancelLobbyResponseDto } from './dto/cancel-lobby-response.dto';
 import type { UpdateLobbyRequestDto } from './dto/update-lobby-request.dto';
@@ -60,6 +61,38 @@ function toLobbyResponse(lobby: LobbyRow, userId: string): LobbyResponseDto {
 @Injectable()
 export class LobbiesService {
   constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
+
+  async recommendations(userId: string): Promise<LobbyRecommendationsResponseDto> {
+    const serverNow = new Date(Date.now());
+    return this.prisma.$transaction(async tx => {
+      const sources = await tx.lobbyMember.findMany({
+        where: { userId, status: 'JOINED', lobby: {
+          organizerId: { not: userId },
+          OR: [{ status: 'PUBLISHED' }, { status: 'COMPLETED', startsAt: { lte: serverNow } }],
+        } },
+        orderBy: [{ joinedAt: 'desc' }, { lobbyId: 'desc' }], take: 50,
+        select: { lobby: { select: { title: true, description: true } } },
+      });
+      if (!sources.length) return { items: [] };
+      // Every eligibility constraint, including whole-group occupancy and ANY
+      // previous membership, is applied before LIMIT. No category/profile signal.
+      const candidates = await tx.$queryRaw<{ id: string; title: string; description: string; startsAt: Date }[]>(Prisma.sql`
+        SELECT l.id, l.title, l.description, l.starts_at AS "startsAt"
+        FROM "Lobby" l
+        WHERE l.status = 'PUBLISHED' AND l.starts_at > ${serverNow}
+          AND l.organizer_id <> ${userId}::uuid
+          AND NOT EXISTS (SELECT 1 FROM "LobbyMember" own
+            WHERE own.lobby_id = l.id AND own.user_id = ${userId}::uuid)
+          AND (SELECT count(*) FROM "LobbyMember" joined
+            WHERE joined.lobby_id = l.id AND joined.status = 'JOINED') < l.capacity
+        ORDER BY l.starts_at ASC, l.id ASC LIMIT 200
+      `);
+      const ids = recommendedIds(sources.map(source => source.lobby), candidates);
+      const rows = await tx.lobby.findMany({ where: { id: { in: ids } }, select: lobbySelect(userId) });
+      const byId = new Map(rows.map(row => [row.id, row]));
+      return { items: ids.map(id => toLobbyResponse(byId.get(id)!, userId)) };
+    }, { isolationLevel: 'RepeatableRead' });
+  }
 
   async create(input: CreateLobbyRequestDto, userId: string): Promise<LobbyResponseDto> {
     const startsAt = parseLobbyInstant(input.startsAt);

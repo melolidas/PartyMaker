@@ -6,6 +6,7 @@ import { Screen } from '../components/Screen';
 import { PartyIcon } from '../components/icons/PartyIcon';
 import { LiveChatsModal } from '../features/chats/LiveChatsModal';
 import { LiveLobbyFeed } from '../features/home/LiveLobbyFeed';
+import { LobbyRecommendations } from '../features/home/LobbyRecommendations';
 import { CancelledLobbyNotice, LiveLobbyDetails } from '../features/home/LiveLobbyDetails';
 import { PersonalLobbiesScreen } from './PersonalLobbiesScreen';
 import { SearchModal } from '../features/search/SearchModal';
@@ -67,6 +68,7 @@ export function HomeScreen({ initialLobbyId = null, onInitialLobbyConsumed, onCr
         </View>
 
         {cancelled ? <CancelledLobbyNotice onDismiss={() => setCancelled(false)} /> : null}
+        <LobbyRecommendations onSelect={setSelectedLobbyId} />
         <LiveLobbyFeed onSelect={setSelectedLobbyId} />
         <LiveLobbyFeed scope="mine" compact onSelect={setSelectedLobbyId} onViewAll={() => showPersonal(true)} onCreate={onCreate} />
 

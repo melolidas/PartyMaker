@@ -29,3 +29,8 @@ export class LobbyPageResponseDto {
   @ApiProperty({ type: String, nullable: true, description: 'Pass as after; null when no more results' })
   nextCursor!: string | null;
 }
+
+export class LobbyRecommendationsResponseDto {
+  @ApiProperty({ type: [LobbyResponseDto], maxItems: 5, description: 'Positive lexical matches only; empty for cold start or no matches. No scores or source history exposed.' })
+  items!: LobbyResponseDto[];
+}

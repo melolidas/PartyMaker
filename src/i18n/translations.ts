@@ -1,6 +1,11 @@
 import { AppLanguage } from './language';
 
 const en = {
+  'recommendations.title': 'Similar to your choices',
+  'recommendations.refresh': 'Refresh recommendations',
+  'recommendations.explanation': 'Similar words in titles and descriptions of lobbies you joined. A simple text comparison, not semantic AI or a nearby search.',
+  'recommendations.empty': 'No matching lobbies yet. You can explore the upcoming catalog below.',
+  'recommendations.error': 'Could not load recommendations. Try again; the catalog is still available.',
   'history.title': 'Participation history',
   'history.explanation': 'Lobbies whose scheduled start time has passed, where you remain registered as a participant. This does not confirm attendance or that the event has ended. Read-only; refresh to see changes.',
   'history.loading': 'Loading participation history…',
@@ -515,6 +520,11 @@ const ru = {
   'create.error.venue': 'Для очной встречи укажи название места длиной от 1 до 140 символов.',
   'create.error.unconfirmed': 'Создание не подтверждено. Сервер мог уже сохранить лобби. Проверь главную перед повторной отправкой; автоматического повтора не было.',
   'category.outdoors': 'На природе',
+  'recommendations.title': 'Похоже на ваши выборы',
+  'recommendations.refresh': 'Обновить рекомендации',
+  'recommendations.explanation': 'Похожие слова в названиях и описаниях лобби, в которые вы вступали. Простое сравнение текста, не семантический ИИ и не поиск поблизости.',
+  'recommendations.empty': 'Похожих лобби пока нет. Ниже доступен общий каталог предстоящих встреч.',
+  'recommendations.error': 'Не удалось загрузить рекомендации. Попробуйте ещё раз; общий каталог остаётся доступен.',
   'lobbies.upcoming': 'Предстоящие лобби',
   'lobbies.mineUpcoming': 'Ваши предстоящие события',
   'membership.join': 'Вступить в лобби',

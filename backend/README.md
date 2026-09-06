@@ -168,6 +168,18 @@ Passwords are hashed with Argon2id. Refresh tokens are random opaque values; onl
 
 All Lobby endpoints require the existing Bearer access-token guard. Swagger documents their DTOs and validation errors; no database schema change is needed.
 
+### GET /api/v1/lobbies/recommendations
+
+Bearer-only, no query or body fields (including limit, userId, scope). Returns **200 `{ items: Lobby[] }`**, at most five existing safe Lobby DTOs with nullable category; no cursor, scores, compatibility percentages or source memberships. Invalid extra fields return `400 VALIDATION_FAILED`. The static route precedes `/:id`.
+
+One captured serverNow and one **RepeatableRead** transaction cover:
+
+1. Up to 50 current user's JOINED choices, joinedAt DESC/lobbyId DESC. Include PUBLISHED at any time and COMPLETED only at startsAt <= serverNow. Exclude user's own organized lobbies, DRAFT/CANCELLED, LEFT/REMOVED. Membership, not card views or attendance, is the signal.
+2. Up to 200 nearest PUBLISHED lobbies with startsAt > serverNow, organizer != user, no own membership of ANY status, and count(all JOINED) < capacity. Parameterized SQL applies every constraint before LIMIT, ordered startsAt ASC/id ASC. LEFT/REMOVED remain excluded from recommendations, without changing ordinary rejoin rules.
+3. Deterministic comparison of **title/description only**, never legacy category/profile/messages: NFKC, lowercase, ё→е, RU/EN stoplist, unique Unicode letter/number tokens. Maximum Jaccard against one source; zero for empty sets. Positive scores ordered DESC then startsAt ASC/id ASC, capped at five; final safe projection is read in the same snapshot.
+
+Cold start/no overlap returns an empty list, not random events. This is a bounded lexical prototype, not semantic AI: no stemming/synonyms/translation/geography and no external provider. Actual join still rechecks capacity/status/time under the existing lock. UI refreshes on opening, manually and via existing lobby invalidation, not polling. Tests in the standard PostgreSQL suite cover filtering before limits and a concurrent edit between snapshot reads; fixtures are isolated and removed by known IDs.
+
 ### Literal search
 
 Optional `q` on `GET /api/v1/lobbies` is a string, trimmed, maximum 100 characters. Missing or whitespace-only q retains the ordinary catalog. Match is a case-insensitive substring of **title OR venueName** (not description). `%`, `_` and `\` are escaped as literal characters, not patterns. Arrays, nested objects and overlong strings return the existing `400 VALIDATION_FAILED` envelope.

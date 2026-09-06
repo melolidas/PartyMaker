@@ -105,6 +105,7 @@ function host(auth) {
       './LiveLobbyChatScreen': { LiveLobbyChatScreen: 'LiveLobbyChatScreen' },
       'expo-modules-core': { uuid: { v4: () => 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb' } },
       './HomeExperienceProvider': { useHomeClock: () => Date.now() },
+      '../features/home/LobbyRecommendations': { LobbyRecommendations: 'LobbyRecommendations' },
       '../navigation/NavScrollContext': { NavScrollContext: { value() {} } },
       './lobbyFeed': { LobbyFeedStore, formatLobbyStartsAt, emptyLobbyFeed: require('../.expo/lobby-tests/features/home/lobbyFeed.js').emptyLobbyFeed },
       './LiveLobbyCard': { LiveLobbyCard: 'LiveLobbyCard', LiveLobbyMetadata: 'LiveLobbyMetadata', LobbyCategoryPlaceholder: 'LobbyCategoryPlaceholder' },
@@ -135,6 +136,119 @@ function texts(tree) {
   return tree && typeof tree === 'object' ? texts(tree.props?.children) : '';
 }
 const byId = (tree, id) => nodes(tree).find(n => n.props?.testID === id);
+
+function recommendationsHost(auth, language = 'ru', onSelect = () => {}) {
+  const h = host(auth);
+  const { LobbyRecommendations } = h.load('src/features/home/LobbyRecommendations.tsx', {
+    '../../i18n/LocalizationProvider': { useI18n: () => ({ t: createTranslator(language), language }) },
+  });
+  const render = () => h.render(LobbyRecommendations, { onSelect });
+  return { ...h, render, cards: () => nodes(render()).filter(n => n.type === 'LiveLobbyCard') };
+}
+
+test('actual recommendations show loading, cold start, error/retry and manual refresh in RU/EN with no demo fallback', async () => {
+  for (const language of ['ru', 'en']) {
+    let next = deferred(), calls = 0;
+    const auth = { status: 'authenticated', user: { id: 'A' }, lobbyApi: { listLobbyRecommendations: () => { calls++; return next.promise; } } };
+    const r = recommendationsHost(auth, language), t = createTranslator(language);
+    assert.ok(byId(r.render(), 'recommendations-loading')); assert.equal(calls, 1);
+    assert.match(texts(r.render()), new RegExp(t('recommendations.title'))); assert.equal(calls, 1, 'no render polling');
+    next.resolve({ items: [] }); await flush(); assert.ok(byId(r.render(), 'recommendations-empty')); assert.equal(r.cards().length, 0);
+    next = deferred(); byId(r.render(), 'recommendations-refresh').props.onPress(); next.reject(Error('offline')); await flush();
+    assert.ok(byId(r.render(), 'recommendations-error')); assert.equal(r.cards().length, 0);
+    next = deferred(); byId(r.render(), 'recommendations-retry').props.onPress();
+    next.resolve({ items: [{ ...lobby, title: 'Actual raw <title>', category: null }] }); await flush();
+    assert.equal(r.cards()[0].props.lobby.title, 'Actual raw <title>'); assert.equal(r.cards()[0].props.lobby.category, null);
+    assert.equal(byId(r.render(), 'recommendations-error'), undefined); assert.equal(calls, 3); r.unmount();
+  }
+});
+
+test('recommendations and all/mine requests have independent loading, failure, pages and retry', async () => {
+  let rec = deferred(); const requests = [];
+  const auth = { status: 'authenticated', user: { id: 'A' }, lobbyApi: {
+    listLobbyRecommendations: () => { requests.push('recommendations'); return rec.promise; },
+    listLobbies: async (after, scope) => { requests.push([after, scope]); return page([{ ...lobby, id: scope }], scope + '-cursor'); },
+  } };
+  const r = recommendationsHost(auth), feeds = ['all', 'mine'].map(scope => {
+    const h = host(auth), { LiveLobbyFeed } = h.load('src/features/home/LiveLobbyFeed.tsx');
+    return { h, render: () => h.render(LiveLobbyFeed, { scope, onSelect() {} }) };
+  });
+  r.render(); feeds.forEach(f => f.render()); await flush();
+  rec.reject(Error('recommendations only failed')); await flush(); assert.ok(byId(r.render(), 'recommendations-error'));
+  for (const [i, feed] of feeds.entries()) {
+    assert.equal(nodes(feed.render()).find(n => n.type === 'LiveLobbyCard').props.lobby.id, i ? 'mine' : 'all');
+    assert.ok(byId(feed.render(), i ? 'mine-lobbies-load-more' : 'lobbies-load-more'));
+  }
+  rec = deferred(); byId(r.render(), 'recommendations-retry').props.onPress(); rec.resolve({ items: [] }); await flush();
+  assert.deepEqual(requests, ['recommendations', [undefined, 'all'], [undefined, 'mine'], 'recommendations']);
+  r.unmount(); feeds.forEach(f => f.h.unmount());
+});
+
+test('recommendations discard late reads on newer invalidation, account/logout/recovery/unmount and do not keep subscriptions', async () => {
+  for (const mode of ['reload', 'account', 'logout', 'recovery', 'unmount']) {
+    const old = deferred(), latest = deferred(); let calls = 0;
+    const auth = { status: 'authenticated', user: { id: 'A' }, storageRecoveryRequired: false,
+      lobbyApi: { listLobbyRecommendations: () => (++calls === 1 ? old : latest).promise } };
+    const r = recommendationsHost(auth); r.render();
+    if (mode === 'reload') getLobbyInvalidation(auth.lobbyApi).invalidate();
+    if (mode === 'account') auth.user = { id: 'B' };
+    if (mode === 'logout') { auth.user = null; auth.status = 'unauthenticated'; }
+    if (mode === 'recovery') auth.storageRecoveryRequired = true;
+    if (mode === 'unmount') r.unmount(); else { r.render(); assert.equal(r.cards().length, 0); }
+    latest.resolve({ items: [{ ...lobby, id: 'latest' }] }); await flush();
+    old.resolve({ items: [{ ...lobby, id: 'old' }] }); await flush();
+    if (mode !== 'unmount') assert.deepEqual(r.cards().map(n => n.props.lobby.id), ['reload', 'account'].includes(mode) ? ['latest'] : []);
+    r.unmount(); const before = calls; getLobbyInvalidation(auth.lobbyApi).invalidate(); assert.equal(calls, before);
+  }
+});
+
+test('actual Home recommendations open existing real details and leave catalog, mine and search routes intact', async () => {
+  const auth = { status: 'authenticated', user: { id: 'A' }, lobbyApi: { listLobbyRecommendations: async () => ({ items: [lobby] }), getLobby: async () => lobby } };
+  const h = host(auth), { HomeScreen } = h.load('src/screens/HomeScreen.tsx', {
+    ...personalScreenMocks(auth), '@expo-google-fonts/outfit/600SemiBold': { Outfit_600SemiBold: {} }, 'expo-font': { useFonts: () => [true] },
+    '../components/icons/PartyIcon': { PartyIcon: 'PartyIcon' }, '../features/chats/LiveChatsModal': { LiveChatsModal: 'LiveChatsModal' },
+    '../features/search/SearchModal': { SearchModal: 'SearchModal' }, './PersonalLobbiesScreen': { PersonalLobbiesScreen: 'PersonalLobbiesScreen' },
+  });
+  const render = () => h.render(HomeScreen, {});
+  const block = nodes(render()).find(n => n.type === 'LobbyRecommendations'); assert.ok(block);
+  const r = recommendationsHost(auth, 'ru', block.props.onSelect); r.render(); await flush(); r.cards()[0].props.onPress();
+  const details = nodes(render()).find(n => n.type === 'LiveLobbyDetails'); assert.equal(details.props.id, lobby.id);
+  const d = host(auth), screen = d.load('src/features/home/LiveLobbyDetails.tsx').LiveLobbyDetails;
+  d.render(screen, details.props); await flush();
+  assert.ok(nodes(d.render(screen, details.props)).find(n => n.type === 'LiveLobbyMetadata' && n.props.lobby.id === lobby.id));
+  details.props.onClose(); assert.equal(nodes(render()).some(n => n.type === 'LiveLobbyDetails'), false);
+  assert.equal(nodes(render()).filter(n => n.type === 'LiveLobbyFeed').length, 2);
+  byId(render(), 'open-search').props.onPress(); assert.ok(nodes(render()).find(n => n.type === 'SearchModal'));
+  r.unmount(); d.unmount(); h.unmount();
+});
+
+test('existing Bearer ApiClient recommendations refresh after join/leave/cancel/edit and old GET cannot restore a removed candidate', async () => {
+  let items = [editableLobby()], late = null; const urls = [];
+  const client = creationClient(async (url, init) => {
+    urls.push({ url, method: init.method, auth: init.headers.Authorization });
+    if (url.endsWith('/auth/login')) return authReply(1);
+    if (url.endsWith('/lobbies/recommendations')) {
+      if (late) { const wait = late; late = null; return wait.promise; }
+      return new Response(JSON.stringify({ items }));
+    }
+    if (url.endsWith('/cancel')) return new Response(JSON.stringify({ id: lobby.id, status: 'CANCELLED' }));
+    return new Response(JSON.stringify(editableLobby()));
+  });
+  await client.login({ email: 'isolated@example.test', password: 'test-only' });
+  const auth = { status: 'authenticated', user: { id: 'A' }, lobbyApi: client }, r = recommendationsHost(auth);
+  r.render(); await flush(); assert.equal(r.cards().length, 1);
+  for (const mutate of [() => client.joinLobby(lobby.id), () => client.leaveLobby(lobby.id),
+    () => client.cancelLobby(lobby.id), () => client.updateLobby(lobby.id, { title: 'Changed' })]) {
+    const wait = deferred(); late = wait;
+    byId(r.render(), 'recommendations-refresh').props.onPress(); await flush();
+    items = []; await mutate(); await flush(); assert.equal(r.cards().length, 0);
+    wait.resolve(new Response(JSON.stringify({ items: [editableLobby()] }))); await flush();
+    assert.equal(r.cards().length, 0, 'pre-mutation recommendation cannot return');
+  }
+  const gets = urls.filter(row => row.url.endsWith('/lobbies/recommendations'));
+  assert.equal(gets.length, 9); assert.ok(gets.every(row => row.method === 'GET' && row.auth === 'Bearer access-1'));
+  r.unmount();
+});
 
 const historyItem = (id = 'past') => ({ id, title: 'demo.pizza <real title>', description: 'Plain <description>', category: 'FOOD',
   startsAt: '2020-01-01T00:30:00.000Z', timeZone: 'America/New_York', isOnline: false, venueName: 'Real venue', isOrganizer: false });

@@ -8,6 +8,7 @@ import { HomeExperienceProvider } from './src/features/home/HomeExperienceProvid
 import { MockChatProvider } from './src/features/chats/MockChatProvider';
 import { NavScrollContext } from './src/navigation/NavScrollContext';
 import { ActivityScreen } from './src/screens/ActivityScreen';
+import { UnreadNotificationsProvider } from './src/features/activity/UnreadNotificationsProvider';
 import { AuthLoadingScreen, AuthScreen } from './src/screens/AuthScreen';
 import { CreateLobbyScreen } from './src/screens/CreateLobbyScreen';
 import { HomeScreen } from './src/screens/HomeScreen';
@@ -36,9 +37,11 @@ function AppGate() {
 
   return (
     <HomeExperienceProvider key={user?.id}>
-      <MockChatProvider>
-        <PartyMaker />
-      </MockChatProvider>
+      <UnreadNotificationsProvider>
+        <MockChatProvider>
+          <PartyMaker />
+        </MockChatProvider>
+      </UnreadNotificationsProvider>
     </HomeExperienceProvider>
   );
 }

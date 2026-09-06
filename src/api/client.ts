@@ -1,7 +1,8 @@
 import { getApiBaseUrl } from './config';
 import { getLobbyInvalidation } from './lobbyInvalidation';
 import { isLobbyResponse } from './lobbyResponse';
-import { isNotificationRead, type NotificationPage, type NotificationRead } from './notificationTypes';
+import { isNotificationRead, isNotificationUnreadCount, type NotificationPage, type NotificationRead, type NotificationUnreadCount } from './notificationTypes';
+import { getNotificationInvalidation } from './notificationInvalidation';
 import type { UpdateLobbyInput } from './lobbyTypes';
 import type { CreateLobbyInput, Lobby, LobbyPage, LobbyScope, LobbyMessage, LobbyMessagePage, SendLobbyMessageInput, ChatPage, CancelLobbyResult, LobbyMemberPage } from './lobbyTypes';
 import {
@@ -269,8 +270,17 @@ export class ApiClient {
   }
 
   async readNotification(id: string): Promise<NotificationRead> {
-    const result = await this.protectedRequest<unknown>(`/notifications/${encodeURIComponent(id)}/read`, { method: 'POST' });
+    const session = this.sessionCoordinator.capturePublishedSession();
+    const result = await this.protectedRequestForSession<unknown>(session, `/notifications/${encodeURIComponent(id)}/read`, { method: 'POST' });
     if (!isNotificationRead(result, id)) throw new ApiClientError({ code: 'INVALID_API_RESPONSE', statusCode: 0, message: 'Notification read is unconfirmed' });
+    // Lives above Activity, including a confirmed mark-read finishing after the tab closes.
+    if (this.sessionCoordinator.isSessionCurrent(session)) getNotificationInvalidation(this).invalidate();
+    return result;
+  }
+
+  async getNotificationUnreadCount(): Promise<NotificationUnreadCount> {
+    const result = await this.protectedRequest<unknown>('/notifications/unread-count', { method: 'GET' });
+    if (!isNotificationUnreadCount(result)) throw new ApiClientError({ code: 'INVALID_API_RESPONSE', statusCode: 0, message: 'Invalid notification count' });
     return result;
   }
 

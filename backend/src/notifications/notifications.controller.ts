@@ -4,7 +4,7 @@ import { AccessTokenGuard } from '../auth/guards/access-token.guard';
 import { CurrentAuth } from '../auth/decorators/current-auth.decorator';
 import type { AuthContext } from '../auth/types/access-token.types';
 import { ApiErrorResponseDto } from '../common/dto/api-error-response.dto';
-import { ListNotificationsQueryDto, NotificationPageDto, NotificationReadDto } from './notification.dto';
+import { ListNotificationsQueryDto, NotificationPageDto, NotificationReadDto, NotificationUnreadCountDto } from './notification.dto';
 import { NotificationsService } from './notifications.service';
 
 @Controller('notifications') @ApiTags('notifications') @ApiBearerAuth('access-token') @UseGuards(AccessTokenGuard)
@@ -12,6 +12,13 @@ import { NotificationsService } from './notifications.service';
 @ApiBadRequestResponse({ type: ApiErrorResponseDto, description: 'VALIDATION_FAILED: invalid/unknown query, cursor, UUID or body' })
 export class NotificationsController {
   constructor(@Inject(NotificationsService) private readonly notifications: NotificationsService) {}
+  @Get('unread-count')
+  @ApiOperation({ summary: 'Count own unread LOBBY_JOINED notifications', description: 'No query parameters. Exact database count across all pages; null actor/lobby and cancelled lobbies do not exclude notifications. No other types.' })
+  @ApiOkResponse({ type: NotificationUnreadCountDto })
+  unreadCount(@CurrentAuth() auth: AuthContext, @Query() query: Record<string, unknown>): Promise<NotificationUnreadCountDto> {
+    if (Object.keys(query).length) throw new BadRequestException({ code: 'VALIDATION_FAILED', message: 'This endpoint accepts no query parameters' });
+    return this.notifications.unreadCount(auth.userId);
+  }
   @Get()
   @ApiExtraModels(ListNotificationsQueryDto)
   @ApiOperation({ summary: 'Own LOBBY_JOINED notifications', description: 'Recipient/type filter before pagination. Current actor/title, not historical snapshots. A past join does not guarantee current membership. One page snapshot; refresh/reopen for external updates. No push or polling.' })

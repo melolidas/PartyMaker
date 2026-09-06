@@ -21,6 +21,8 @@ const scrollLogic = require('../.expo/lobby-tests/features/chats/liveChatScroll.
 const membersLogic = require('../.expo/lobby-tests/features/home/lobbyMembers.js');
 const editLogic = require('../.expo/lobby-tests/features/home/editLobbyForm.js');
 const activityLogic = require('../.expo/lobby-tests/features/activity/activity.js');
+const countLogic = require('../.expo/lobby-tests/features/activity/unreadCount.js');
+const { getNotificationInvalidation } = require('../.expo/lobby-tests/api/notificationInvalidation.js');
 
 const lobby = {
   id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', title: 'demo.pizza', description: 'My own description <not markup>',
@@ -44,6 +46,7 @@ function host(auth) {
   let effects = [];
   const same = (a, b) => a && b && a.length === b.length && a.every((v, i) => Object.is(v, b[i]));
   const react = {
+    createContext(value) { return { value, Provider: 'Context.Provider' }; },
     useContext(context) { return context.value; },
     useRef(value) { return react.useMemo(() => ({ current: value }), []); },
     useState(initial) {
@@ -277,8 +280,169 @@ const button = (tree, label) => nodes(tree).find(n => n.props?.accessibilityRole
 const notification = (id = 'n1', extra = {}) => ({ id, type: 'LOBBY_JOINED', createdAt: '2026-09-01T12:00:00.000Z', readAt: null,
   actor: { id: 'actor', displayName: 'Настоящее <имя>', handle: 'real_handle', avatar: null }, lobby: { id: lobby.id, title: 'Actual lobby <title>' }, ...extra });
 const readReceipt = id => ({ id, readAt: '2026-09-06T10:11:12.345Z' });
+const countReply = unreadCount => ({ unreadCount });
+
+test('unread store coalesces requests, discards an invalidated result/error and performs one trailing read', async () => {
+  for (const reject of [false, true]) {
+    const old = deferred(), fresh = deferred(); let calls = 0;
+    const store = new countLogic.UnreadCountStore(() => ++calls === 1 ? old.promise : fresh.promise);
+    store.setAccount('A'); await flush(); const flight = store.refresh(); assert.equal(store.refresh(), flight);
+    store.invalidate(); store.invalidate(); store.invalidate(); assert.equal(calls, 1);
+    if (reject) old.reject(Error('old')); else old.resolve(countReply(10));
+    await flush(); assert.equal(calls, 2); assert.equal(store.getSnapshot().unreadCount, null); assert.equal(store.getSnapshot().loading, true);
+    fresh.resolve(countReply(1)); await flight; assert.equal(store.getSnapshot().unreadCount, 1); assert.equal(store.getSnapshot().stale, false);
+    await flush(); assert.equal(calls, 2);
+  }
+});
+
+test('count invalidation at publication and the settlement microtask is never lost', async () => {
+  const store = new countLogic.UnreadCountStore(async () => countReply(++calls)); let calls = 0, invalidated = false;
+  store.subscribe(() => { if (!store.getSnapshot().stale && !invalidated) { invalidated = true; store.invalidate(); } });
+  store.setAccount('A'); await flush(); assert.equal(calls, 2); assert.equal(store.getSnapshot().unreadCount, 2);
+  const pending = store.refresh(); pending.then(() => store.invalidate()); await flush();
+  assert.equal(calls, 4); assert.equal(store.getSnapshot().unreadCount, 4);
+});
+
+test('count unknown/error is not zero; invalid DTOs fail closed, manual retry preserves no false fresh value', async () => {
+  for (const value of [null, {}, { unreadCount: -1 }, { unreadCount: 0.5 }, { unreadCount: '2' }, { unreadCount: 1, private: 1 }, { unreadCount: Infinity }]) {
+    let calls = 0; const store = new countLogic.UnreadCountStore(async () => { calls++; return value; });
+    store.setAccount('A'); await flush(); assert.equal(store.getSnapshot().unreadCount, null); assert.equal(store.getSnapshot().error, true); assert.equal(calls, 1);
+  }
+  let fail = false; const store = new countLogic.UnreadCountStore(async () => { if (fail) throw Error('offline'); return countReply(3); });
+  store.setAccount('A'); await flush(); fail = true; await store.refresh();
+  assert.equal(store.getSnapshot().unreadCount, 3); assert.equal(store.getSnapshot().stale, true); assert.equal(store.getSnapshot().error, true);
+  fail = false; await store.refresh(); assert.equal(store.getSnapshot().stale, false);
+});
+
+test('count context clears synchronously; old account success/error cannot block or overwrite the next session', async () => {
+  for (const reject of [false, true]) {
+    const old = deferred(); let calls = 0;
+    const store = new countLogic.UnreadCountStore(() => ++calls === 1 ? old.promise : Promise.resolve(countReply(0)));
+    store.setAccount('A'); await flush(); store.setAccount(null); assert.equal(store.getSnapshot().unreadCount, null);
+    store.setAccount('B'); await flush(); assert.equal(store.getSnapshot().unreadCount, 0);
+    if (reject) old.reject(Error('old')); else old.resolve(countReply(88));
+    await flush(); assert.equal(store.getSnapshot().account, 'B'); assert.equal(store.getSnapshot().unreadCount, 0); assert.equal(store.getSnapshot().stale, false);
+    store.setAccount(null); store.invalidate(); await flush(); assert.equal(calls, 2);
+  }
+});
+
+test('unread count transport keeps Bearer refresh bounded and rejects malformed totals without network retries', async () => {
+  for (const outcome of ['valid', 'invalid', 'network']) {
+    let calls = 0, rotations = 0;
+    const client = creationClient(async (url, options) => {
+      if (url.endsWith('/auth/login')) return authReply(1);
+      if (url.endsWith('/auth/refresh')) { rotations++; return authReply(2); }
+      assert.equal(new URL(url).pathname, '/api/v1/notifications/unread-count'); assert.equal(new URL(url).search, ''); assert.equal(options.method, 'GET');
+      if (++calls === 1) return new Response(JSON.stringify({ error: { code: 'INVALID_ACCESS_TOKEN', message: 'expired' } }), { status: 401 });
+      assert.equal(new Headers(options.headers).get('Authorization'), 'Bearer access-2');
+      if (outcome === 'network') throw Error('offline');
+      return new Response(JSON.stringify(outcome === 'invalid' ? { unreadCount: -1 } : countReply(101)));
+    });
+    await client.login({ email: 'a@example.test', password: 'fixture' });
+    if (outcome === 'valid') assert.deepEqual(await client.getNotificationUnreadCount(), countReply(101));
+    else await assert.rejects(client.getNotificationUnreadCount(), error => error.code === (outcome === 'invalid' ? 'INVALID_API_RESPONSE' : 'NETWORK_ERROR'));
+    assert.equal(calls, 2); assert.equal(rotations, 1);
+  }
+});
+
+test('actual provider survives tab close, initializes authenticated restore/login and gates account/recovery during render', async () => {
+  let calls = 0; const auth = { user: { id: 'A' }, status: 'restoring', storageRecoveryRequired: false, lobbyApi: { getNotificationUnreadCount: async () => { calls++; return countReply(5); } } };
+  const h = host(auth), components = h.load('src/features/activity/UnreadNotificationsProvider.tsx', {
+    '../../api/notificationInvalidation': { getNotificationInvalidation }, './unreadCount': countLogic,
+  }, 'UnreadContext');
+  const render = () => { const tree = h.render(components.UnreadNotificationsProvider, { children: 'tabs' }); components.UnreadContext.value = tree.props.value; return tree; };
+  render(); await flush(); assert.equal(calls, 0); auth.status = 'authenticated'; render(); await flush();
+  const store = components.UnreadContext.value; assert.equal(store.getSnapshot().unreadCount, 5); assert.equal(calls, 1);
+  // Activity's opening/Refresh signal updates count, its unmount does not dispose provider state.
+  const activity = activityHost({ listNotifications: async () => page() }); activity.auth.lobbyApi = auth.lobbyApi;
+  auth.lobbyApi.listNotifications = async () => page(); auth.lobbyApi.readNotification = async id => readReceipt(id);
+  activity.render(); await flush(); assert.equal(calls, 2); activity.h.unmount(); render(); await flush(); assert.equal(calls, 2);
+  // Invoke actual hook with the real context, before provider effects can clear it.
+  auth.storageRecoveryRequired = true;
+  assert.equal(h.render(components.useUnreadNotificationCount).unreadCount, null);
+  auth.storageRecoveryRequired = false; auth.user = { id: 'B' };
+  assert.equal(h.render(components.useUnreadNotificationCount).unreadCount, null);
+  h.unmount(); assert.equal(store.getSnapshot().account, null);
+});
+
+test('Activity receipt discovery invalidates the global count but aggregate zero cannot confirm a particular row', async () => {
+  for (const viaPage of [false, true]) {
+    let readAt = null, countCalls = 0, writes = 0;
+    const client = creationClient(async (url, options) => {
+      if (url.endsWith('/auth/login')) return authReply(1);
+      if (url.endsWith('/unread-count')) { countCalls++; return new Response(JSON.stringify(countReply(readAt ? 0 : 1))); }
+      if (options.method === 'POST') { writes++; readAt = readReceipt('n1').readAt; throw Error('lost after commit'); }
+      return new Response(JSON.stringify(page([notification('n1', { readAt })], 'next')));
+    });
+    await client.login({ email: 'a@example.test', password: 'fixture' });
+    const count = new countLogic.UnreadCountStore(() => client.getNotificationUnreadCount());
+    const unsub = getNotificationInvalidation(client).subscribe(count.invalidate); count.setAccount('A'); await flush();
+    const c = activityHost(client); c.render(); await flush(); byId(c.render(), 'mark-read-n1').props.onPress(); await flush();
+    assert.equal(c.state().readErrors.n1, 'unconfirmed'); await count.refresh(); assert.equal(count.getSnapshot().unreadCount, 0);
+    assert.ok(byId(c.render(), 'unread-n1')); assert.ok(byId(c.render(), 'read-error-n1'));
+    const before = countCalls;
+    byId(c.render(), viaPage ? 'activity-more' : 'activity-refresh').props.onPress(); await flush();
+    assert.ok(byId(c.render(), 'read-n1')); assert.equal(c.state().readErrors.n1, undefined); assert.ok(countCalls > before);
+    const stable = countCalls; c.render(); c.render(); await flush(); assert.equal(countCalls, stable); assert.equal(writes, 1);
+    c.h.unmount(); unsub(); count.setAccount(null);
+  }
+});
+
+test('confirmed POST invalidates count after Activity closes; stale POST from another session does not', async () => {
+  const post = deferred(); let read = false, countCalls = 0;
+  const client = creationClient(async (url, options) => {
+    if (url.endsWith('/auth/login')) return authReply(1);
+    if (url.endsWith('/unread-count')) { countCalls++; return new Response(JSON.stringify(countReply(read ? 0 : 1))); }
+    if (options.method === 'POST') return post.promise;
+    return new Response(JSON.stringify(page([notification()])));
+  });
+  await client.login({ email: 'a@example.test', password: 'fixture' });
+  const count = new countLogic.UnreadCountStore(() => client.getNotificationUnreadCount()); const unsub = getNotificationInvalidation(client).subscribe(count.invalidate);
+  count.setAccount('A'); const c = activityHost(client); c.render(); await flush(); byId(c.render(), 'mark-read-n1').props.onPress(); await flush(); c.h.unmount();
+  const updated = deferred(); count.subscribe(() => { if (!count.getSnapshot().stale && count.getSnapshot().unreadCount === 0) updated.resolve(); });
+  read = true; const before = countCalls; post.resolve(new Response(JSON.stringify(readReceipt('n1')))); await updated.promise;
+  assert.equal(count.getSnapshot().unreadCount, 0); assert.equal(countCalls, before + 1); unsub();
+  const late = deferred(); let signals = 0, logins = 0;
+  const other = creationClient(async url => url.endsWith('/auth/login') ? authReply(++logins, String(logins)) : late.promise);
+  await other.login({ email: 'a@example.test', password: 'fixture' }); getNotificationInvalidation(other).subscribe(() => signals++);
+  const sending = other.readNotification('n1'), rejected = assert.rejects(sending, error => error.code === 'INVALID_REFRESH_TOKEN');
+  await flush(); await other.login({ email: 'b@example.test', password: 'fixture' }); late.resolve(new Response(JSON.stringify(readReceipt('n1')))); await rejected; assert.equal(signals, 0);
+});
+
+test('actual BottomNav badge 0/1/99/100+ and unknown/error uses RU/EN accessibility, preserves compact transforms and clicks', async () => {
+  for (const language of ['ru', 'en']) for (const compact of [false, true]) {
+    const auth = {}, h = host(auth), buttonHost = host(auth); let state = { ...countLogic.emptyUnreadCount('A'), loading: true }, route;
+    const value = { interpolate: options => options };
+    const motion = h.load('src/navigation/navMotion.ts');
+    const native = { View: 'View', Text: 'Text', Pressable: 'Pressable', StyleSheet: { create: v => v }, Platform: { OS: 'web', select: v => v.web },
+      AccessibilityInfo: { isReduceMotionEnabled: async () => false, addEventListener: () => ({ remove() {} }) },
+      Animated: { View: 'Animated.View', Value: function() { return value; }, timing: () => ({ start() {}, stop() {} }) } };
+    const nav = h.load('src/components/BottomNav.tsx', {
+      'react-native': native, '@expo/vector-icons': { Feather: 'Feather', Ionicons: 'Ionicons' }, '../auth/AuthProvider': { useAuthenticatedAuth: () => auth },
+      '../features/profile/AvatarImage': { AvatarImage: 'AvatarImage' }, '../i18n/LocalizationProvider': { useI18n: () => ({ t: createTranslator(language) }) },
+      '../navigation/useNavPulse': { useNavPulse: () => ({ progress: value, pulse: fn => fn?.() }) }, '../navigation/navMotion': motion,
+      '../theme': { colors: {} }, './GlassNavSurface': { GlassNavSurface: 'GlassNavSurface' }, './NavPressGlint': { NavPressGlint: 'NavPressGlint' }, './NavActiveIndicator': { NavActiveIndicator: 'NavActiveIndicator' },
+      '../features/activity/UnreadNotificationsProvider': { useUnreadNotificationCount: () => state },
+    }, 'NavButton');
+    const render = () => h.render(nav.BottomNav, { active: 'home', compact, onChange: next => { route = next; } });
+    const activityButton = () => { const node = nodes(render()).find(n => n.type === nav.NavButton && n.props.item.route === 'activity'); return buttonHost.render(node.type, node.props); };
+    assert.equal(texts(byId(activityButton(), 'notification-count-badge')), '…');
+    state = { ...state, loading: false, error: true }; assert.equal(texts(byId(activityButton(), 'notification-count-badge')), '?');
+    assert.match(activityButton().props.accessibilityLabel, language === 'ru' ? /недоступно/ : /unavailable/);
+    for (const n of [0, 1, 99, 100, 1000]) {
+      state = { ...state, unreadCount: n, stale: false, error: false };
+      const button = activityButton(), badge = byId(button, 'notification-count-badge');
+      assert.equal(texts(badge), n ? n > 99 ? '99+' : String(n) : '');
+      assert.match(button.props.accessibilityLabel, new RegExp(String(n))); button.props.onPress(); assert.equal(route, 'activity');
+      if (badge) { assert.equal(badge.props.pointerEvents, 'none'); assert.equal(badge.props.style.height, 18); assert.equal(badge.props.style.top, 0); }
+    }
+    const transforms = byId(render(), 'bottom-nav-scroll').props.style[1].transform;
+    assert.deepEqual(Array.from(transforms[1].scale.outputRange), [1, motion.navMotion.compactScale]);
+    state = countLogic.emptyUnreadCount(null); assert.equal(byId(activityButton(), 'notification-count-badge'), undefined); h.unmount(); buttonHost.unmount();
+  }
+});
 function activityHost(api = {}) {
-  const auth = { user: { id: 'A' }, lobbyApi: { listNotifications: async () => page([notification()]), readNotification: async id => readReceipt(id), ...api } };
+  const auth = { user: { id: 'A' }, lobbyApi: api instanceof ApiClient ? api : { listNotifications: async () => page([notification()]), readNotification: async id => readReceipt(id), ...api } };
   let store;
   const detailHost = host(auth), detailComponents = detailHost.load('src/features/home/LiveLobbyDetails.tsx');
   const noticeHost = host(auth);
@@ -1278,6 +1442,7 @@ test('actual App creation callback navigates Home, reloads both scopes and opens
     './src/components/BottomNav': {BottomNav:'BottomNav'},
     './src/i18n/LocalizationProvider': {LocalizationProvider:'LocalizationProvider'},
     './src/features/home/HomeExperienceProvider': {HomeExperienceProvider:'HomeExperienceProvider'},
+    './src/features/activity/UnreadNotificationsProvider': {UnreadNotificationsProvider:'UnreadNotificationsProvider'},
     './src/features/chats/MockChatProvider': {MockChatProvider:'MockChatProvider'},
     './src/navigation/NavScrollContext': {NavScrollContext:{Provider:'NavScrollContext'}},
     './src/theme': {colors:{}},

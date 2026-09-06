@@ -317,7 +317,9 @@ Real absent/LEFT → JOINED transitions create the notification under the same L
 
 `POST /api/v1/notifications/:id/read` accepts no body/query fields and returns 200 `{ id, readAt }`. The conditional UPDATE includes id/recipientId/type/readAt=null; concurrent requests recheck after the row lock and preserve the first readAt. Foreign/missing/unsupported IDs all return 404 NOTIFICATION_NOT_FOUND, including after being read. There is no read-all/unread/delete endpoint. Both endpoints are in Swagger and `npm test`; tests include real overlapping PostgreSQL transactions and isolated notification-insert failure/rollback.
 
-No push, polling, realtime, badges or other notification types. The frontend opens/refreshes manually and uses the existing session transport. No Prisma schema/migration or auth lifecycle changes.
+`GET /api/v1/notifications/unread-count` requires Bearer, accepts no query parameters and returns only `{ unreadCount: nonnegative integer }`. It uses a database COUNT with recipientId=current user, type=LOBBY_JOINED and readAt=null, not list pagination or loaded rows. Null actor/lobby and cancelled-lobby notifications still count; other types and read records do not. Reading the same event repeatedly does not decrement twice. Existing indexes/schema/seed remain unchanged. Swagger and PostgreSQL tests cover isolation, more than one page, null relations, cancellation and idempotent read.
+
+The frontend uses this total for the Activity navigation badge (1–99/99+, unknown/error distinguished from zero). Refresh points are authenticated startup, Activity opening/Refresh and confirmed read-state changes, not realtime. No push, polling or other notification types. No Prisma schema/migration or auth lifecycle changes.
 
 ## Error response
 

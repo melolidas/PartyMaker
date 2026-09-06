@@ -1,6 +1,9 @@
 import { AppLanguage } from './language';
 
 const en = {
+  'activity.countLabel': 'Unread notifications:',
+  'activity.countLoading': 'Updating unread count.',
+  'activity.countError': 'Unread count unavailable. Open Activity and refresh to retry.',
   'activity.history': 'Lobby join events. Refresh to see new activity; membership may have changed since.',
   'activity.joinEvent': 'Lobby join:',
   'activity.unknownActor': 'Deleted user',
@@ -370,6 +373,9 @@ export type TranslationKey = keyof typeof en;
 export type Translator = (key: TranslationKey) => string;
 
 const ru = {
+  'activity.countLabel': 'Непрочитанных уведомлений:',
+  'activity.countLoading': 'Обновление числа непрочитанных.',
+  'activity.countError': 'Число непрочитанных недоступно. Откройте Активность и обновите для повтора.',
   'activity.history': 'События вступления в лобби. Новые появляются после обновления; участие с тех пор могло измениться.',
   'activity.joinEvent': 'Вступление в лобби:',
   'activity.unknownActor': 'Удалённый пользователь',

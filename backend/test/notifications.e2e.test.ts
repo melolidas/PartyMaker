@@ -45,6 +45,42 @@ const list = (user = 0) => request(app.getHttpServer()).get('/api/v1/notificatio
 const read = (id: string, user = 0) => request(app.getHttpServer()).post(`/api/v1/notifications/${id}/read`).auth(tokens[user]!, { type: 'bearer' });
 const notes = (id: string) => prisma.notification.findMany({ where: { lobbyId: id }, orderBy: { createdAt: 'asc' } });
 const cursor = (value: unknown) => Buffer.from(JSON.stringify(value)).toString('base64url');
+const unreadCount = (user = 0) => request(app.getHttpServer()).get('/api/v1/notifications/unread-count').auth(tokens[user]!, { type: 'bearer' });
+
+test('unread count requires Bearer, rejects every query parameter and documents only a safe integer DTO', async () => {
+  await request(app.getHttpServer()).get('/api/v1/notifications/unread-count').expect(401);
+  for (const query of [{ userId: users[1] }, { limit: 1 }, { after: 'cursor' }, { type: 'LOBBY_JOINED' }, { 'x[]': 1 }, { 'filter[id]': 'x' }]) {
+    assert.equal((await unreadCount().query(query).expect(400)).body.error.code, 'VALIDATION_FAILED');
+  }
+  assert.deepEqual((await unreadCount().expect(200)).body, { unreadCount: 0 });
+  const docs = (await request(app.getHttpServer()).get('/docs-json').expect(200)).body;
+  assert.ok(docs.paths['/api/v1/notifications/unread-count'].get.security.length);
+  assert.deepEqual(Object.keys(docs.components.schemas.NotificationUnreadCountDto.properties), ['unreadCount']);
+});
+
+test('database unread total is recipient/type/read scoped across pages and survives null relations/cancellation', async () => {
+  const id = await lobby(), ids = Array.from({ length: 53 }, () => randomUUID());
+  await prisma.notification.createMany({ data: ids.map((noteId, index) => ({ id: noteId, recipientId: users[0]!, type: 'LOBBY_JOINED' as const,
+    actorId: index % 2 ? users[1]! : null, lobbyId: index % 3 ? id : null })) });
+  await prisma.notification.createMany({ data: [
+    { recipientId: users[0]!, type: 'LOBBY_JOINED', readAt: new Date() },
+    { recipientId: users[1]!, type: 'LOBBY_JOINED' },
+    ...(['LOBBY_INVITED', 'MOMENT_LIKED', 'MOMENT_COMMENTED'] as const).map(type => ({ recipientId: users[0]!, type })),
+  ] });
+  assert.deepEqual((await unreadCount().expect(200)).body, { unreadCount: 53 });
+  assert.equal((await list().expect(200)).body.items.length, 20);
+  assert.deepEqual((await unreadCount(1).expect(200)).body, { unreadCount: 1 });
+  await action(id, 'cancel', 0).expect(200);
+  assert.deepEqual((await unreadCount().expect(200)).body, { unreadCount: 53 });
+  const receipt = (await read(ids[0]!).expect(200)).body;
+  await Promise.all([read(ids[0]!).expect(200), read(ids[0]!).expect(200)]);
+  assert.equal((await read(ids[0]!).expect(200)).body.readAt, receipt.readAt);
+  assert.deepEqual((await unreadCount().expect(200)).body, { unreadCount: 52 });
+  await read(ids[1]!, 1).expect(404);
+  assert.deepEqual((await unreadCount().expect(200)).body, { unreadCount: 52 });
+  // Preserve existing test baselines, remove only exact rows created above for this test.
+  await prisma.notification.deleteMany({ where: { recipientId: { in: [users[0]!, users[1]!] } } });
+});
 
 test('only real join/rejoin creates an event; no historical backfill, no-op, leave, rejected or self event', async () => {
   const id = await lobby(2); assert.equal((await notes(id)).length, 0);

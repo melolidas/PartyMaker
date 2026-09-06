@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { AccessibilityInfo, Animated, Platform, Pressable, StyleSheet, View } from 'react-native';
+import { AccessibilityInfo, Animated, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { Feather, Ionicons } from '@expo/vector-icons';
 import { useAuthenticatedAuth } from '../auth/AuthProvider';
 import { AvatarImage } from '../features/profile/AvatarImage';
@@ -12,6 +12,8 @@ import { RouteName } from '../types';
 import { GlassNavSurface } from './GlassNavSurface';
 import { NavPressGlint } from './NavPressGlint';
 import { NavActiveIndicator } from './NavActiveIndicator';
+import { useUnreadNotificationCount } from '../features/activity/UnreadNotificationsProvider';
+import type { UnreadCountState } from '../features/activity/unreadCount';
 
 type NavItem = {
   route: RouteName;
@@ -34,6 +36,7 @@ const items: NavItem[] = [
 ];
 
 export function BottomNav({ active, compact, onChange }: Props) {
+  const unread = useUnreadNotificationCount();
   const scrollProgress = useRef(new Animated.Value(0)).current;
   const [reduceMotion, setReduceMotion] = useState(false);
   const [reduceTransparency, setReduceTransparency] = useState(false);
@@ -133,6 +136,7 @@ export function BottomNav({ active, compact, onChange }: Props) {
               item={item}
               selected={active === item.route}
               onChange={selectTab}
+              unread={unread}
             />
           ))}
           {/* A separate foreground layer: button fills cannot hide the light. */}
@@ -152,19 +156,28 @@ function NavButton({
   item,
   selected,
   onChange,
+  unread,
 }: {
   item: NavItem;
   selected: boolean;
   onChange: Props['onChange'];
+  unread: UnreadCountState;
 }) {
   const { t } = useI18n();
   const create = item.route === 'create';
   const iconColor = create ? colors.black : selected ? colors.white : '#B8BFC6';
+  const showCount = item.route === 'activity' && !!unread.account;
+  const badge = !showCount ? null : unread.stale
+    ? (unread.loading ? '…' : '?')
+    : unread.unreadCount ? (unread.unreadCount > 99 ? '99+' : String(unread.unreadCount)) : null;
+  const countLabel = !showCount ? '' : unread.stale
+    ? t(unread.error ? 'activity.countError' : 'activity.countLoading')
+    : `${t('activity.countLabel')} ${unread.unreadCount}`;
 
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={t(item.label)}
+      accessibilityLabel={countLabel ? `${t(item.label)}. ${countLabel}` : t(item.label)}
       accessibilityState={{ selected }}
       onPress={() => onChange(item.route)}
       style={styles.item}
@@ -189,6 +202,9 @@ function NavButton({
         ) : (
           <Feather name={item.icon} size={create ? 30 : 27} color={iconColor} />
         )}
+        {badge ? <View testID="notification-count-badge" pointerEvents="none" accessible={false} style={styles.countBadge}>
+          <Text accessible={false} allowFontScaling={false} style={styles.countText}>{badge}</Text>
+        </View> : null}
       </View>
     </Pressable>
   );
@@ -200,6 +216,9 @@ function ProfileNavAvatar() {
 }
 
 const styles = StyleSheet.create({
+  countBadge: { position: 'absolute', top: 0, right: 1, minWidth: 18, height: 18, paddingHorizontal: 3,
+    alignItems: 'center', justifyContent: 'center', borderRadius: 9, backgroundColor: '#F1F3F5', borderWidth: 1, borderColor: '#15191B' },
+  countText: { color: '#080A0B', fontSize: 10, lineHeight: 13, fontWeight: '800' },
   wrapper: {
     pointerEvents: 'box-none',
     position: 'absolute',

@@ -1,4 +1,5 @@
 import { ApiClientError } from '../../api/errors';
+import { getNotificationInvalidation } from '../../api/notificationInvalidation';
 import { isNotificationRead, type LobbyNotification, type NotificationsApi } from '../../api/notificationTypes';
 
 export type ActivityState = {
@@ -16,7 +17,7 @@ export class ActivityStore {
   private receipts = new Map<string, string>();
   private state = emptyActivity(null);
   private listeners = new Set<() => void>();
-  constructor(private readonly api: NotificationsApi) {}
+  constructor(private readonly api: Pick<NotificationsApi, 'listNotifications' | 'readNotification'>) {}
   getSnapshot = () => this.state;
   subscribe = (listener: () => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; };
   private publish(state: ActivityState) {
@@ -36,15 +37,21 @@ export class ActivityStore {
   }
   private merge(items: LobbyNotification[]): LobbyNotification[] {
     const rows = new Map<string, LobbyNotification>();
+    let resolvedUncertainty = false;
     for (const row of items) {
       // Once read is observed it is monotonic; old GET/page data cannot undo it.
-      if (row.readAt && !this.receipts.has(row.id)) this.receipts.set(row.id, row.readAt);
+      if (row.readAt && !this.receipts.has(row.id)) {
+        if (this.state.marking[row.id] || this.state.readErrors[row.id] === 'unconfirmed') resolvedUncertainty = true;
+        this.receipts.set(row.id, row.readAt);
+      }
       rows.set(row.id, { ...row, readAt: this.receipts.get(row.id) ?? row.readAt });
     }
+    if (resolvedUncertainty) getNotificationInvalidation(this.api).invalidate();
     return [...rows.values()];
   }
   reload = async (): Promise<void> => {
     if (!this.state.account) return;
+    getNotificationInvalidation(this.api).invalidate();
     const generation = ++this.readGeneration;
     this.publish({ ...this.state, loading: true, loadingMore: false, error: null, imageRevision: this.state.imageRevision + 1 });
     try {

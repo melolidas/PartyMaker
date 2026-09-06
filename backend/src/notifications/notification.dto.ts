@@ -37,3 +37,6 @@ export class NotificationReadDto {
   @ApiProperty({ format: 'uuid' }) id!: string;
   @ApiProperty({ format: 'date-time', description: 'First confirmed read timestamp, never rewritten on retry' }) readAt!: string;
 }
+export class NotificationUnreadCountDto {
+  @ApiProperty({ type: 'integer', minimum: 0, description: 'All own unread LOBBY_JOINED notifications, including null actor/lobby' }) unreadCount!: number;
+}

@@ -7,10 +7,19 @@ export type LobbyNotification = {
 };
 export type NotificationPage = { items: LobbyNotification[]; nextCursor: string | null };
 export type NotificationRead = { id: string; readAt: string };
+export type NotificationUnreadCount = { unreadCount: number };
 export type NotificationsApi = {
   listNotifications: (after?: string) => Promise<NotificationPage>;
   readNotification: (id: string) => Promise<NotificationRead>;
+  getNotificationUnreadCount: () => Promise<NotificationUnreadCount>;
 };
+
+export function isNotificationUnreadCount(value: unknown): value is NotificationUnreadCount {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const row = value as Record<string, unknown>;
+  return Object.keys(row).join(',') === 'unreadCount' && typeof row.unreadCount === 'number'
+    && Number.isSafeInteger(row.unreadCount) && row.unreadCount >= 0;
+}
 
 export function isNotificationRead(value: unknown, id: string): value is NotificationRead {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;

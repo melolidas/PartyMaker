@@ -3,7 +3,7 @@ import { isUUID } from 'class-validator';
 import { PrismaService } from '../prisma/prisma.service';
 import { avatarSelect, toAvatar } from '../avatars/avatar-record';
 import { parseLobbyInstant } from '../lobbies/lobby-instant';
-import type { ListNotificationsQueryDto, NotificationPageDto, NotificationReadDto } from './notification.dto';
+import type { ListNotificationsQueryDto, NotificationPageDto, NotificationReadDto, NotificationUnreadCountDto } from './notification.dto';
 
 function decodeCursor(value: string): { createdAt: Date; id: string } {
   try {
@@ -19,6 +19,9 @@ function decodeCursor(value: string): { createdAt: Date; id: string } {
 @Injectable()
 export class NotificationsService {
   constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
+  async unreadCount(userId: string): Promise<NotificationUnreadCountDto> {
+    return { unreadCount: await this.prisma.notification.count({ where: { recipientId: userId, type: 'LOBBY_JOINED', readAt: null } }) };
+  }
   async list(userId: string, query: ListNotificationsQueryDto): Promise<NotificationPageDto> {
     const cursor = query.after === undefined ? null : decodeCursor(query.after);
     return this.prisma.$transaction(async tx => {

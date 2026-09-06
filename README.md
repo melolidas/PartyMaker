@@ -135,7 +135,9 @@ UI translations and localized demo content live in `src/i18n/translations.ts`. F
 
 ## Home: real catalog and membership
 
-“Upcoming lobbies” / “Предстоящие лобби” loads only future PUBLISHED events, ordered by `startsAt ASC, id ASC`, in pages of 20. Refresh replaces the list; Load more appends the next cursor page. Loading, empty, error/retry and pagination-error states never substitute demo records. There is no geographic search or fabricated distance.
+Home keeps the search/logo/chats header, followed by the compact horizontal **Your lobbies / Твои лобби** section. Below it, two inline text tabs select one ordinary vertical card feed: **Recommended / Рекомендованные** (default) and **All lobbies / Все лобби**. The selected tab has brighter text and a short underline; switching uses taps, not new swipe gestures. Refresh uses labelled icon buttons. The personal section stays mounted and does not reload when switching these feed tabs.
+
+The ordinary catalog loads only future PUBLISHED events, ordered by `startsAt ASC, id ASC`, in pages of 20. Refresh replaces the list; Load more appends the next cursor page. Loading, empty, error/retry and pagination-error states never substitute demo records. An empty catalog displays “No lobbies yet / Пока нет лобби”. There is no geographic search or fabricated distance.
 
 Titles and descriptions are literal user-authored text, not translation keys. Schedule labels use the event's IANA `timeZone`; countdowns use the absolute ISO `startsAt` and do not restart on rerender. Lobby images remain category placeholders; the avatar slice does not enable lobby photos. Counts include JOINED members only, and a membership badge identifies the current user's JOINED membership. The group gauge averages real JOINED users' extroversion scores, rounds to the nearest 0.5 (ties upward), and is hidden for an empty group. It is a group aggregate, not invented sample data.
 
@@ -143,7 +145,7 @@ Tap a real card to fetch details from `/lobbies/:id` and join/leave as a regular
 
 Cursor pages are not a database snapshot: events may start or be edited between requests; Refresh obtains a fresh catalog. Existing seed events may already be in the past, so an empty catalog can be correct. Do not reseed/reset an existing database to populate Home: use isolated future test lobbies with known ids, and remove only those fixtures afterward.
 
-For browser smoke testing, sign in at the Expo Web URL above, check the real list and details, then the empty state with no future published fixtures. Temporarily stop only the local API, press Refresh to see an error, restart it and press Retry. Legacy demo chat fixtures never replace the real inbox, list or search results.
+For browser smoke testing, sign in at the Expo Web URL above and check the real lists, tab switching and details at a narrow viewport. Use isolated request failures for error/retry checks, without interrupting shared services. Legacy demo chat fixtures never replace the real inbox, list or search results.
 
 ## Your lobbies: real upcoming participation
 
@@ -157,7 +159,9 @@ Browser regression: create an isolated lobby → Home personal section → View 
 
 ## Home recommendations — lexical prototype
 
-**Similar to your choices / Похоже на ваши выборы** is a separate real-API block on Home, with at most five future lobbies, manual Refresh, loading/error/Retry and a normal empty state. It does not replace all/mine/Search or the profile's past participation history. Real cards open existing details; joining still checks availability on the server. Category-free creation and neutral placeholders are preserved.
+The **Recommended / Рекомендованные** tab first requests `GET /lobbies/recommendations`. A valid, nonempty response displays only those items in server order (at most five, without pagination or filler). A valid, empty `items` response instead loads the **full ordinary `scope=all` catalog**, with its normal ordering and cursor pagination, under the same tab name. Paging this catalog does not request recommendations again. A failed or malformed recommendation response shows an error and Retry, not a catalog fallback.
+
+**All lobbies / Все лобби** always requests its own ordinary catalog without waiting for recommendations. It never automatically switches to Recommended. The two feeds own separate pages/errors/request generations; leaving a tab discards that opening's requests and returning loads fresh data, without reloading Your lobbies. Real cards retain existing details, membership, edit/cancel and return navigation. Search and the profile's past participation history are unchanged. Category-free creation and neutral placeholders are preserved.
 
 `GET /api/v1/lobbies/recommendations` uses the latest 50 JOINED memberships, ordered by joinedAt DESC/lobbyId DESC: PUBLISHED (future or past), or COMPLETED whose start has passed. Own organized lobbies, DRAFT/CANCELLED and LEFT/REMOVED are not interest signals. Participation is a recorded choice, not proof of attendance. Card views are not tracked.
 
@@ -165,9 +169,13 @@ The nearest 200 candidates are filtered **in PostgreSQL before LIMIT**: future P
 
 Matching uses only title/description: NFKC Unicode normalization, lowercase, ё→е, RU/EN stopwords, unique letter/number word sets. Score is the maximum Jaccard intersection/union against one source, not pooled interests. Empty sets score zero; repeated words have no extra weight. Only positive matches are returned, ordered by score DESC/startsAt ASC/id ASC. Scores and source history are not sent to the frontend.
 
-This is **lexical comparison, not semantic AI**: synonyms, inflections and different languages may not match; the 50/200 samples are limited and geography is ignored. No categories, messages or profile fields enter scoring, and no data is sent to third-party services. No random cold-start fallback, polling or timers. Existing lobby invalidation after create/join/leave/cancel/edit reloads the mounted recommendation block; external changes appear on Refresh/reopening. Its account-scoped request generation rejects late responses independently of all/mine.
+This is **lexical comparison, not semantic AI**: synonyms, inflections and different languages may not match; the 50/200 samples are limited and geography is ignored. No categories, messages or profile fields enter scoring, and no data is sent to third-party services. The cold-start catalog is the ordinary server feed, not random or fabricated personalized results. No polling or new timers are used.
 
-Verification for this slice: standard frontend tests cover actual component states/navigation, independent feeds and stale responses; PostgreSQL tests cover source/candidate limits, filters, scoring and one-snapshot consistency. Browser smoke with two isolated accounts covered cold start → join → matching recommendation → real details → Refresh → leave → empty, plus organizer self-exclusion, account switching and unchanged profile history. Request-error/race paths were checked automatically, not via browser fault injection. Physical phone not tested. Only the three smoke lobbies and two confirmed fixture accounts were cleaned up.
+Manual Refresh and existing lobby invalidation after create/join/leave/cancel/edit recheck the active Recommended tab from scratch: matches replace the catalog; no matches start the catalog at its first page. Both transitions reset cursors and invalidate older requests, so a late catalog page cannot append to a personalized selection. Invalidation on All refreshes only its catalog. Account/logout/recovery/unmount and newer refreshes invalidate late results. Recommendation errors cannot break All or Your lobbies. Technical explanations remain here, not as permanent Home subtitles.
+
+Automated Home regressions exercise actual components: header/mine/tab ordering, RU/EN and tab accessibility, cold-start catalog beyond five rows, pagination errors/retry, both mode transitions, stale pages, malformed responses, independent All/mine, details/return and session isolation. The existing PostgreSQL recommendation tests continue covering the unchanged source/candidate filters and scoring. Browser and physical-device verification for this layout change are reported separately from these automated checks.
+
+Layout verification: Expo Web at 390×844 and 320×740 with the existing PostgreSQL and two isolated accounts covered cold-start catalog → real details → join → personalized selection → All → Recommended → leave → catalog, manual Refresh, View all/return and account isolation. `aria-selected` is also supplied explicitly for Expo Web while native keeps `accessibilityState.selected`. Pagination failures and race/malformed-response cases were verified automatically, not through browser fault injection. Physical phone not tested. Only the four confirmed smoke lobbies and two fixture accounts were deleted afterward.
 
 ## Create a real lobby
 

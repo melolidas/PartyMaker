@@ -6,7 +6,7 @@ import { Screen } from '../components/Screen';
 import { PartyIcon } from '../components/icons/PartyIcon';
 import { LiveChatsModal } from '../features/chats/LiveChatsModal';
 import { LiveLobbyFeed } from '../features/home/LiveLobbyFeed';
-import { LobbyRecommendations } from '../features/home/LobbyRecommendations';
+import { HomeLobbyFeed } from '../features/home/HomeLobbyFeed';
 import { CancelledLobbyNotice, LiveLobbyDetails } from '../features/home/LiveLobbyDetails';
 import { PersonalLobbiesScreen } from './PersonalLobbiesScreen';
 import { SearchModal } from '../features/search/SearchModal';
@@ -67,10 +67,9 @@ export function HomeScreen({ initialLobbyId = null, onInitialLobbyConsumed, onCr
           </Pressable>
         </View>
 
+        <LiveLobbyFeed scope="mine" compact homePreview onSelect={setSelectedLobbyId} onViewAll={() => showPersonal(true)} onCreate={onCreate} />
         {cancelled ? <CancelledLobbyNotice onDismiss={() => setCancelled(false)} /> : null}
-        <LobbyRecommendations onSelect={setSelectedLobbyId} />
-        <LiveLobbyFeed onSelect={setSelectedLobbyId} />
-        <LiveLobbyFeed scope="mine" compact onSelect={setSelectedLobbyId} onViewAll={() => showPersonal(true)} onCreate={onCreate} />
+        <HomeLobbyFeed onSelect={setSelectedLobbyId} />
 
       </Screen>
       {selectedLobbyId ? <LiveLobbyDetails key={selectedLobbyId} id={selectedLobbyId} onClose={() => setSelectedLobbyId(null)} onCancelled={() => setCancelled(true)} /> : null}

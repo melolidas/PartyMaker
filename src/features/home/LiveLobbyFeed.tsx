@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useSyncExternalStore } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Feather } from '@expo/vector-icons';
 import type { LobbyScope } from '../../api/lobbyTypes';
 import { getLobbyInvalidation } from '../../api/lobbyInvalidation';
 import { useAuth } from '../../auth/AuthProvider';
@@ -12,11 +13,12 @@ type Props = {
   onSelect: (id: string) => void;
   scope?: LobbyScope;
   compact?: boolean;
+  homePreview?: boolean;
   onViewAll?: () => void;
   onCreate?: () => void;
 };
 
-export function LiveLobbyFeed({ onSelect, scope = 'all', compact = false, onViewAll, onCreate }: Props) {
+export function LiveLobbyFeed({ onSelect, scope = 'all', compact = false, homePreview = false, onViewAll, onCreate }: Props) {
   const { lobbyApi, user, status, storageRecoveryRequired } = useAuth();
   const { t } = useI18n();
   const account = status === 'authenticated' && !storageRecoveryRequired ? user?.id ?? null : null;
@@ -38,11 +40,11 @@ export function LiveLobbyFeed({ onSelect, scope = 'all', compact = false, onView
       <View style={styles.heading}>
         <Text accessibilityRole="header" style={styles.title}>{t(scope === 'mine' ? 'home.yourLobbies' : 'lobbies.upcoming')}</Text>
         {onViewAll ? <Pressable testID="view-all-your-lobbies" accessibilityRole="button" accessibilityLabel={t('yourLobbies.open')} onPress={onViewAll}><Text style={styles.muted}>{t('common.viewAll')}</Text></Pressable> : null}
-        <Pressable accessibilityRole="button" accessibilityLabel={t('lobbies.reload')} disabled={!account || state.status === 'loading' || state.loadingMore} onPress={() => void store.reload()}>
-          <Text style={styles.muted}>{t('lobbies.reload')}</Text>
+        <Pressable accessibilityRole="button" accessibilityLabel={t(homePreview ? 'home.refreshMine' : 'lobbies.reload')} disabled={!account || state.status === 'loading' || state.loadingMore} onPress={() => void store.reload()} style={homePreview ? styles.refresh : undefined}>
+          {homePreview ? <Feather name="refresh-cw" size={18} color={colors.muted} /> : <Text style={styles.muted}>{t('lobbies.reload')}</Text>}
         </Pressable>
       </View>
-      {scope === 'mine' ? <Text style={styles.muted}>{t('lobbies.mineUpcoming')}</Text> : null}
+      {scope === 'mine' && !homePreview ? <Text style={styles.muted}>{t('lobbies.mineUpcoming')}</Text> : null}
       {state.status === 'loading' ? <View testID={`${idPrefix}-loading`} style={styles.message}><ActivityIndicator color={colors.text} /><Text style={styles.muted}>{t('lobbies.loading')}</Text></View> : null}
       {state.status === 'ready' && state.items.length === 0 ? <View testID={`${idPrefix}-empty`}>
         <Text style={styles.messageText}>{t(scope === 'mine' ? 'lobbies.mineEmpty' : 'lobbies.empty')}</Text>
@@ -61,6 +63,7 @@ export function LiveLobbyFeed({ onSelect, scope = 'all', compact = false, onView
 }
 
 const styles = StyleSheet.create({
+  refresh: { width: 40, height: 44, alignItems: 'center', justifyContent: 'center' },
   horizontal: { gap: 10 },
   list: { gap: 12, marginTop: 18, marginBottom: 24 },
   heading: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },

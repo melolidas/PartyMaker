@@ -105,7 +105,8 @@ function host(auth) {
       './LiveLobbyChatScreen': { LiveLobbyChatScreen: 'LiveLobbyChatScreen' },
       'expo-modules-core': { uuid: { v4: () => 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb' } },
       './HomeExperienceProvider': { useHomeClock: () => Date.now() },
-      '../features/home/LobbyRecommendations': { LobbyRecommendations: 'LobbyRecommendations' },
+      '../features/home/HomeLobbyFeed': { HomeLobbyFeed: 'HomeLobbyFeed' },
+      './homeFeed': require('../.expo/lobby-tests/features/home/homeFeed.js'),
       '../navigation/NavScrollContext': { NavScrollContext: { value() {} } },
       './lobbyFeed': { LobbyFeedStore, formatLobbyStartsAt, emptyLobbyFeed: require('../.expo/lobby-tests/features/home/lobbyFeed.js').emptyLobbyFeed },
       './LiveLobbyCard': { LiveLobbyCard: 'LiveLobbyCard', LiveLobbyMetadata: 'LiveLobbyMetadata', LobbyCategoryPlaceholder: 'LobbyCategoryPlaceholder' },
@@ -139,27 +140,27 @@ const byId = (tree, id) => nodes(tree).find(n => n.props?.testID === id);
 
 function recommendationsHost(auth, language = 'ru', onSelect = () => {}) {
   const h = host(auth);
-  const { LobbyRecommendations } = h.load('src/features/home/LobbyRecommendations.tsx', {
+  const { HomeLobbyFeed } = h.load('src/features/home/HomeLobbyFeed.tsx', {
     '../../i18n/LocalizationProvider': { useI18n: () => ({ t: createTranslator(language), language }) },
   });
-  const render = () => h.render(LobbyRecommendations, { onSelect });
+  const render = () => h.render(HomeLobbyFeed, { onSelect });
   return { ...h, render, cards: () => nodes(render()).filter(n => n.type === 'LiveLobbyCard') };
 }
 
 test('actual recommendations show loading, cold start, error/retry and manual refresh in RU/EN with no demo fallback', async () => {
   for (const language of ['ru', 'en']) {
     let next = deferred(), calls = 0;
-    const auth = { status: 'authenticated', user: { id: 'A' }, lobbyApi: { listLobbyRecommendations: () => { calls++; return next.promise; } } };
+    const auth = { status: 'authenticated', user: { id: 'A' }, lobbyApi: { listLobbyRecommendations: () => { calls++; return next.promise; }, listLobbies: async () => page() } };
     const r = recommendationsHost(auth, language), t = createTranslator(language);
-    assert.ok(byId(r.render(), 'recommendations-loading')); assert.equal(calls, 1);
-    assert.match(texts(r.render()), new RegExp(t('recommendations.title'))); assert.equal(calls, 1, 'no render polling');
-    next.resolve({ items: [] }); await flush(); assert.ok(byId(r.render(), 'recommendations-empty')); assert.equal(r.cards().length, 0);
-    next = deferred(); byId(r.render(), 'recommendations-refresh').props.onPress(); next.reject(Error('offline')); await flush();
-    assert.ok(byId(r.render(), 'recommendations-error')); assert.equal(r.cards().length, 0);
-    next = deferred(); byId(r.render(), 'recommendations-retry').props.onPress();
-    next.resolve({ items: [{ ...lobby, title: 'Actual raw <title>', category: null }] }); await flush();
+    assert.ok(byId(r.render(), 'home-feed-loading')); assert.equal(calls, 1);
+    assert.match(texts(r.render()), new RegExp(t('home.recommendedTab'))); assert.equal(calls, 1, 'no render polling');
+    next.resolve({ items: [] }); await flush(); assert.ok(byId(r.render(), 'home-feed-empty')); assert.equal(r.cards().length, 0);
+    next = deferred(); byId(r.render(), 'home-feed-refresh').props.onPress(); next.reject(Error('offline')); await flush();
+    assert.ok(byId(r.render(), 'home-feed-error')); assert.equal(r.cards().length, 0);
+    next = deferred(); byId(r.render(), 'home-feed-retry').props.onPress();
+    next.resolve({ items: [{ ...lobby, groupExtroversionLevel: 6, title: 'Actual raw <title>', category: null }] }); await flush();
     assert.equal(r.cards()[0].props.lobby.title, 'Actual raw <title>'); assert.equal(r.cards()[0].props.lobby.category, null);
-    assert.equal(byId(r.render(), 'recommendations-error'), undefined); assert.equal(calls, 3); r.unmount();
+    assert.equal(byId(r.render(), 'home-feed-error'), undefined); assert.equal(calls, 3); r.unmount();
   }
 });
 
@@ -167,20 +168,20 @@ test('recommendations and all/mine requests have independent loading, failure, p
   let rec = deferred(); const requests = [];
   const auth = { status: 'authenticated', user: { id: 'A' }, lobbyApi: {
     listLobbyRecommendations: () => { requests.push('recommendations'); return rec.promise; },
-    listLobbies: async (after, scope) => { requests.push([after, scope]); return page([{ ...lobby, id: scope }], scope + '-cursor'); },
+    listLobbies: async (after, scope) => { requests.push([after, scope]); return page([{ ...lobby, groupExtroversionLevel: 6, id: scope }], scope + '-cursor'); },
   } };
   const r = recommendationsHost(auth), feeds = ['all', 'mine'].map(scope => {
     const h = host(auth), { LiveLobbyFeed } = h.load('src/features/home/LiveLobbyFeed.tsx');
     return { h, render: () => h.render(LiveLobbyFeed, { scope, onSelect() {} }) };
   });
   r.render(); feeds.forEach(f => f.render()); await flush();
-  rec.reject(Error('recommendations only failed')); await flush(); assert.ok(byId(r.render(), 'recommendations-error'));
+  rec.reject(Error('recommendations only failed')); await flush(); assert.ok(byId(r.render(), 'home-feed-error'));
   for (const [i, feed] of feeds.entries()) {
     assert.equal(nodes(feed.render()).find(n => n.type === 'LiveLobbyCard').props.lobby.id, i ? 'mine' : 'all');
     assert.ok(byId(feed.render(), i ? 'mine-lobbies-load-more' : 'lobbies-load-more'));
   }
-  rec = deferred(); byId(r.render(), 'recommendations-retry').props.onPress(); rec.resolve({ items: [] }); await flush();
-  assert.deepEqual(requests, ['recommendations', [undefined, 'all'], [undefined, 'mine'], 'recommendations']);
+  rec = deferred(); byId(r.render(), 'home-feed-retry').props.onPress(); rec.resolve({ items: [] }); await flush();
+  assert.deepEqual(requests, ['recommendations', [undefined, 'all'], [undefined, 'mine'], 'recommendations', [undefined, 'all']]);
   r.unmount(); feeds.forEach(f => f.h.unmount());
 });
 
@@ -195,29 +196,29 @@ test('recommendations discard late reads on newer invalidation, account/logout/r
     if (mode === 'logout') { auth.user = null; auth.status = 'unauthenticated'; }
     if (mode === 'recovery') auth.storageRecoveryRequired = true;
     if (mode === 'unmount') r.unmount(); else { r.render(); assert.equal(r.cards().length, 0); }
-    latest.resolve({ items: [{ ...lobby, id: 'latest' }] }); await flush();
-    old.resolve({ items: [{ ...lobby, id: 'old' }] }); await flush();
+    latest.resolve({ items: [{ ...lobby, groupExtroversionLevel: 6, id: 'latest' }] }); await flush();
+    old.resolve({ items: [{ ...lobby, groupExtroversionLevel: 6, id: 'old' }] }); await flush();
     if (mode !== 'unmount') assert.deepEqual(r.cards().map(n => n.props.lobby.id), ['reload', 'account'].includes(mode) ? ['latest'] : []);
     r.unmount(); const before = calls; getLobbyInvalidation(auth.lobbyApi).invalidate(); assert.equal(calls, before);
   }
 });
 
 test('actual Home recommendations open existing real details and leave catalog, mine and search routes intact', async () => {
-  const auth = { status: 'authenticated', user: { id: 'A' }, lobbyApi: { listLobbyRecommendations: async () => ({ items: [lobby] }), getLobby: async () => lobby } };
+  const auth = { status: 'authenticated', user: { id: 'A' }, lobbyApi: { listLobbyRecommendations: async () => ({ items: [{ ...lobby, groupExtroversionLevel: 6 }] }), getLobby: async () => lobby } };
   const h = host(auth), { HomeScreen } = h.load('src/screens/HomeScreen.tsx', {
     ...personalScreenMocks(auth), '@expo-google-fonts/outfit/600SemiBold': { Outfit_600SemiBold: {} }, 'expo-font': { useFonts: () => [true] },
     '../components/icons/PartyIcon': { PartyIcon: 'PartyIcon' }, '../features/chats/LiveChatsModal': { LiveChatsModal: 'LiveChatsModal' },
     '../features/search/SearchModal': { SearchModal: 'SearchModal' }, './PersonalLobbiesScreen': { PersonalLobbiesScreen: 'PersonalLobbiesScreen' },
   });
   const render = () => h.render(HomeScreen, {});
-  const block = nodes(render()).find(n => n.type === 'LobbyRecommendations'); assert.ok(block);
+  const block = nodes(render()).find(n => n.type === 'HomeLobbyFeed'); assert.ok(block);
   const r = recommendationsHost(auth, 'ru', block.props.onSelect); r.render(); await flush(); r.cards()[0].props.onPress();
   const details = nodes(render()).find(n => n.type === 'LiveLobbyDetails'); assert.equal(details.props.id, lobby.id);
   const d = host(auth), screen = d.load('src/features/home/LiveLobbyDetails.tsx').LiveLobbyDetails;
   d.render(screen, details.props); await flush();
   assert.ok(nodes(d.render(screen, details.props)).find(n => n.type === 'LiveLobbyMetadata' && n.props.lobby.id === lobby.id));
   details.props.onClose(); assert.equal(nodes(render()).some(n => n.type === 'LiveLobbyDetails'), false);
-  assert.equal(nodes(render()).filter(n => n.type === 'LiveLobbyFeed').length, 2);
+  assert.equal(nodes(render()).filter(n => n.type === 'LiveLobbyFeed').length, 1);
   byId(render(), 'open-search').props.onPress(); assert.ok(nodes(render()).find(n => n.type === 'SearchModal'));
   r.unmount(); d.unmount(); h.unmount();
 });
@@ -231,6 +232,7 @@ test('existing Bearer ApiClient recommendations refresh after join/leave/cancel/
       if (late) { const wait = late; late = null; return wait.promise; }
       return new Response(JSON.stringify({ items }));
     }
+    if (url.includes('/lobbies?')) return new Response(JSON.stringify(page()));
     if (url.endsWith('/cancel')) return new Response(JSON.stringify({ id: lobby.id, status: 'CANCELLED' }));
     return new Response(JSON.stringify(editableLobby()));
   });
@@ -240,7 +242,7 @@ test('existing Bearer ApiClient recommendations refresh after join/leave/cancel/
   for (const mutate of [() => client.joinLobby(lobby.id), () => client.leaveLobby(lobby.id),
     () => client.cancelLobby(lobby.id), () => client.updateLobby(lobby.id, { title: 'Changed' })]) {
     const wait = deferred(); late = wait;
-    byId(r.render(), 'recommendations-refresh').props.onPress(); await flush();
+    byId(r.render(), 'home-feed-refresh').props.onPress(); await flush();
     items = []; await mutate(); await flush(); assert.equal(r.cards().length, 0);
     wait.resolve(new Response(JSON.stringify({ items: [editableLobby()] }))); await flush();
     assert.equal(r.cards().length, 0, 'pre-mutation recommendation cannot return');
@@ -248,6 +250,128 @@ test('existing Bearer ApiClient recommendations refresh after join/leave/cancel/
   const gets = urls.filter(row => row.url.endsWith('/lobbies/recommendations'));
   assert.equal(gets.length, 9); assert.ok(gets.every(row => row.method === 'GET' && row.auth === 'Bearer access-1'));
   r.unmount();
+});
+
+const feedRow = (id = lobby.id) => ({ ...lobby, id, category: null, groupExtroversionLevel: 6 });
+const feedAuth = api => ({ status: 'authenticated', user: { id: 'A' }, storageRecoveryRequired: false, lobbyApi: api });
+
+test('Home orders header, stable compact mine, then default text tabs and one vertical feed without technical headings', async () => {
+  for (const language of ['ru', 'en']) {
+    const calls = [], t = createTranslator(language);
+    const auth = feedAuth({ listLobbies: async (after, scope) => { calls.push(scope); return page([feedRow(scope)]); }, listLobbyRecommendations: async () => ({ items: [feedRow('personal')] }) });
+    const h = host(auth), { HomeScreen } = h.load('src/screens/HomeScreen.tsx', {
+      ...personalScreenMocks(auth), '@expo-google-fonts/outfit/600SemiBold': { Outfit_600SemiBold: {} }, 'expo-font': { useFonts: () => [true] },
+      '../components/icons/PartyIcon': { PartyIcon: 'PartyIcon' }, '../features/chats/LiveChatsModal': { LiveChatsModal: 'LiveChatsModal' },
+      '../features/search/SearchModal': { SearchModal: 'SearchModal' }, './PersonalLobbiesScreen': { PersonalLobbiesScreen: 'PersonalLobbiesScreen' },
+    });
+    const home = () => h.render(HomeScreen, {}), tree = nodes(home());
+    assert.ok(tree.findIndex(n => n.props?.testID === 'home-brand') < tree.findIndex(n => n.type === 'LiveLobbyFeed'));
+    assert.ok(tree.findIndex(n => n.type === 'LiveLobbyFeed') < tree.findIndex(n => n.type === 'HomeLobbyFeed'));
+    assert.equal(tree.filter(n => n.type === 'LiveLobbyFeed').length, 1);
+    const mineProps = tree.find(n => n.type === 'LiveLobbyFeed').props;
+    assert.equal(mineProps.scope, 'mine'); assert.equal(mineProps.compact, true); assert.equal(mineProps.homePreview, true);
+    const mh = host(auth), { LiveLobbyFeed } = mh.load('src/features/home/LiveLobbyFeed.tsx', { '../../i18n/LocalizationProvider': { useI18n: () => ({ t, language }) } });
+    const mine = () => mh.render(LiveLobbyFeed, mineProps), r = recommendationsHost(auth, language);
+    mine(); r.render(); await flush();
+    assert.equal(byId(r.render(), 'home-tab-recommended').props.accessibilityRole, 'tab');
+    assert.equal(byId(r.render(), 'home-tab-recommended').props.accessibilityState.selected, true);
+    assert.equal(byId(r.render(), 'home-tab-all').props.accessibilityState.selected, false);
+    assert.equal(byId(r.render(), 'home-tab-recommended').props['aria-selected'], true, 'RN Web exposes selection via aria-selected');
+    assert.equal(byId(r.render(), 'home-tab-all').props['aria-selected'], false);
+    assert.equal(r.cards()[0].props.compact, undefined);
+    const firstMineCard = nodes(mine()).find(n => n.type === 'LiveLobbyCard').props.lobby;
+    for (const tabName of ['all', 'recommended', 'all']) {
+      byId(r.render(), `home-tab-${tabName}`).props.onPress(); r.render(); home(); mine(); await flush();
+      assert.equal(nodes(mine()).find(n => n.type === 'LiveLobbyCard').props.lobby, firstMineCard);
+    }
+    assert.equal(calls.filter(scope => scope === 'mine').length, 1);
+    assert.equal(r.cards().length, 1); assert.equal(byId(r.render(), 'home-tab-all').props.accessibilityState.selected, true);
+    assert.equal(byId(r.render(), 'home-tab-all').props['aria-selected'], true);
+    const visible = texts(mine()) + texts(r.render());
+    for (const key of ['recommendations.title', 'recommendations.explanation', 'recommendations.empty', 'lobbies.mineUpcoming', 'lobbies.upcoming']) assert.equal(visible.includes(t(key)), false, key);
+    assert.equal(byId(r.render(), 'home-feed-refresh').props.accessibilityLabel, t('home.refreshFeed'));
+    const mineScroller = nodes(mine()).find(n => n.type === 'ScrollView'); assert.equal(mineScroller.props.horizontal, true);
+    assert.equal(nodes(r.render()).some(n => n.type === 'ScrollView' || n.type === 'FlatList'), false, 'one outer vertical scroll owner');
+    r.unmount(); mh.unmount(); h.unmount();
+  }
+});
+
+test('empty recommendations use the FULL catalog; page retry retains rows/cursor, deduplicates, and never rechecks recommendations', async () => {
+  let recommendations = 0, next = deferred(); const calls = [], first = Array.from({ length: 7 }, (_, i) => feedRow(`row-${i}`));
+  const auth = feedAuth({ listLobbyRecommendations: async () => { recommendations++; return { items: [] }; },
+    listLobbies: (after, scope) => { calls.push({ after, scope }); return after ? next.promise : Promise.resolve(page(first, 'cursor-1')); } });
+  const r = recommendationsHost(auth); r.render(); await flush();
+  assert.equal(r.cards().length, 7, 'fallback is not capped to five');
+  const more = byId(r.render(), 'home-feed-more').props.onPress; more(); more();
+  assert.equal(byId(r.render(), 'home-feed-more').props.disabled, true); assert.equal(calls.length, 2);
+  next.reject(Error('page offline')); await flush(); assert.ok(byId(r.render(), 'home-feed-error')); assert.equal(r.cards().length, 7);
+  next = deferred(); byId(r.render(), 'home-feed-retry').props.onPress();
+  assert.deepEqual(calls.at(-1), { after: 'cursor-1', scope: 'all' });
+  next.resolve(page([first[6], feedRow('row-7')])); await flush();
+  assert.equal(r.cards().length, 8); assert.equal(recommendations, 1); assert.equal(byId(r.render(), 'home-feed-more'), undefined);
+  assert.equal(byId(r.render(), 'home-tab-recommended').props.accessibilityState.selected, true); r.unmount();
+});
+
+test('Refresh/invalidation switches catalog to personal and back, discarding the old catalog page and resetting its cursor', async () => {
+  let personal = [], pageResult = page([feedRow('first')], 'old-cursor'); const late = deferred(), calls = [];
+  const auth = feedAuth({ listLobbyRecommendations: async () => ({ items: personal }),
+    listLobbies: (after, scope) => { calls.push({ after, scope }); return after ? late.promise : Promise.resolve(pageResult); } });
+  const r = recommendationsHost(auth); r.render(); await flush(); byId(r.render(), 'home-feed-more').props.onPress();
+  personal = [feedRow('rank-2'), feedRow('rank-1')]; getLobbyInvalidation(auth.lobbyApi).invalidate(); await flush();
+  assert.deepEqual(r.cards().map(n => n.props.lobby.id), ['rank-2', 'rank-1']); assert.equal(byId(r.render(), 'home-feed-more'), undefined);
+  late.resolve(page([feedRow('stale')], 'stale-cursor')); await flush();
+  assert.deepEqual(r.cards().map(n => n.props.lobby.id), ['rank-2', 'rank-1']);
+  personal = []; pageResult = page([feedRow('new-first')], 'new-cursor'); byId(r.render(), 'home-feed-refresh').props.onPress(); await flush();
+  assert.deepEqual(calls, [{ after: undefined, scope: 'all' }, { after: 'old-cursor', scope: 'all' }, { after: undefined, scope: 'all' }]);
+  assert.deepEqual(r.cards().map(n => n.props.lobby.id), ['new-first']); assert.ok(byId(r.render(), 'home-feed-more')); r.unmount();
+});
+
+test('All does not wait for recommendations; switching immediately cancels old fallback and never changes selected tab on invalidation', async () => {
+  for (const lateItems of [[], [feedRow('late-personal')]]) {
+    const pending = deferred(); let calls = 0, recCalls = 0;
+    const auth = feedAuth({ listLobbyRecommendations: () => { recCalls++; return pending.promise; },
+      listLobbies: async () => { calls++; return page([feedRow('all')]); } });
+    const r = recommendationsHost(auth); r.render(); byId(r.render(), 'home-tab-all').props.onPress();
+    // Resolve before the next render/effect: the click already invalidated the old request.
+    pending.resolve({ items: lateItems }); await flush(); assert.equal(calls, 0);
+    r.render(); await flush(); assert.deepEqual(r.cards().map(n => n.props.lobby.id), ['all']); assert.equal(calls, 1);
+    getLobbyInvalidation(auth.lobbyApi).invalidate(); await flush();
+    assert.equal(recCalls, 1); assert.equal(calls, 2); assert.equal(byId(r.render(), 'home-tab-all').props.accessibilityState.selected, true); r.unmount();
+  }
+});
+
+test('malformed recommendations are errors, not catalog fallback; All remains usable and a valid empty retry may load catalog', async () => {
+  for (const invalid of [null, {}, [], { items: null }, { items: 'bad' }, { items: [null] }, { items: [{ id: 'bad' }] },
+    { items: Array.from({ length: 6 }, (_, i) => feedRow(String(i))) }, { items: [], nextCursor: null }]) {
+    let response = invalid, calls = 0;
+    const auth = feedAuth({ listLobbyRecommendations: async () => response, listLobbies: async () => { calls++; return page(); } });
+    const r = recommendationsHost(auth); r.render(); await flush();
+    assert.ok(byId(r.render(), 'home-feed-error')); assert.equal(byId(r.render(), 'home-feed-empty'), undefined); assert.equal(calls, 0);
+    byId(r.render(), 'home-tab-all').props.onPress(); r.render(); await flush(); assert.ok(byId(r.render(), 'home-feed-empty')); assert.equal(calls, 1);
+    byId(r.render(), 'home-tab-recommended').props.onPress(); r.render(); await flush(); assert.ok(byId(r.render(), 'home-feed-error'));
+    response = { items: [] }; byId(r.render(), 'home-feed-retry').props.onPress(); await flush(); assert.ok(byId(r.render(), 'home-feed-empty')); assert.equal(calls, 2);
+    r.unmount();
+  }
+});
+
+test('late fallback first/page reads and failures cannot survive tab/account/logout/recovery/unmount or a newer refresh', async () => {
+  for (const stage of ['first', 'page']) for (const change of ['tab', 'account', 'logout', 'recovery', 'unmount', 'refresh']) {
+    const late = deferred(); let fresh = false, calls = 0;
+    const auth = feedAuth({ listLobbyRecommendations: async () => ({ items: fresh ? [feedRow('new')] : [] }),
+      listLobbies: (after) => { calls++; return fresh ? Promise.resolve(page([feedRow('new')])) : stage === 'first' || after ? late.promise : Promise.resolve(page([feedRow('first')], 'next')); } });
+    const r = recommendationsHost(auth); r.render(); await flush();
+    if (stage === 'page') byId(r.render(), 'home-feed-more').props.onPress();
+    fresh = true;
+    if (change === 'tab') byId(r.render(), 'home-tab-all').props.onPress();
+    if (change === 'account') auth.user = { id: 'B' };
+    if (change === 'logout') { auth.status = 'unauthenticated'; auth.user = null; }
+    if (change === 'recovery') auth.storageRecoveryRequired = true;
+    if (change === 'refresh') getLobbyInvalidation(auth.lobbyApi).invalidate();
+    if (change === 'unmount') r.unmount(); else r.render();
+    await flush(); late.resolve(page([feedRow('late')], 'late-cursor')); await flush();
+    if (change !== 'unmount') assert.deepEqual(r.cards().map(n => n.props.lobby.id), ['tab', 'account', 'refresh'].includes(change) ? ['new'] : []);
+    r.unmount(); const before = calls; getLobbyInvalidation(auth.lobbyApi).invalidate(); assert.equal(calls, before);
+  }
 });
 
 const historyItem = (id = 'past') => ({ id, title: 'demo.pizza <real title>', description: 'Plain <description>', category: 'FOOD',
@@ -1659,7 +1783,7 @@ test('real feed/details never import demo joining, chat storage or conversations
     assert.doesNotMatch(source, /demoLobbies|joinDemoLobby|MockChatProvider|mockConversation|titleKey|startsAfterMs/);
   }
   const home = readFileSync(path.join(__dirname, '../src/screens/HomeScreen.tsx'), 'utf8');
-  assert.match(home, /LiveLobbyFeed onSelect=\{setSelectedLobbyId\}/);
+  assert.match(home, /HomeLobbyFeed onSelect=\{setSelectedLobbyId\}/);
   assert.match(home, /LiveLobbyDetails key=\{selectedLobbyId\} id=\{selectedLobbyId\}/);
   assert.doesNotMatch(home, /lobbies\.demo/);
 });
@@ -1852,7 +1976,13 @@ test('actual App creation callback navigates Home, reloads both scopes and opens
     assert.equal(nodes(feedHost.render(LiveLobbyFeed,feed.props)).find(n=>n.type==='LiveLobbyCard').props.lobby.id,lobby.id);
     feedHost.unmount();
   }
-  assert.deepEqual(calls,[{after:undefined,scope:'all'},{after:undefined,scope:'mine'}]);
+  const discovery = nodes(tree).find(n => n.type === 'HomeLobbyFeed');
+  const feed = recommendationsHost({ status: 'authenticated', user: { id: 'A' }, lobbyApi: {
+    listLobbyRecommendations: async () => ({ items: [] }),
+    listLobbies: async (after, scope) => { calls.push({ after, scope }); return page([{ ...lobby, groupExtroversionLevel: 6 }]); },
+  } }, 'ru', discovery.props.onSelect);
+  feed.render(); await flush(); assert.equal(feed.cards()[0].props.lobby.id, lobby.id); feed.unmount();
+  assert.deepEqual(calls,[{after:undefined,scope:'mine'},{after:undefined,scope:'all'}]);
   assert.equal(nodes(render()).find(n=>n.type==='HomeScreen').props.initialLobbyId,null,'Navigation intent consumed, not reopened on later visits');
   homeHost.unmount();h.unmount();
 });

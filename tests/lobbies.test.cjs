@@ -278,8 +278,10 @@ test('members transport uses current Bearer and encoded lobby/cursor with bounde
 const button = (tree, label) => nodes(tree).find(n => n.props?.accessibilityRole === 'button' && texts(n) === label);
 
 const notification = (id = 'n1', extra = {}) => ({ id, type: 'LOBBY_JOINED', createdAt: '2026-09-01T12:00:00.000Z', readAt: null,
+  lobbyTitleSnapshot: null,
   actor: { id: 'actor', displayName: 'Настоящее <имя>', handle: 'real_handle', avatar: null }, lobby: { id: lobby.id, title: 'Actual lobby <title>' }, ...extra });
 const readReceipt = id => ({ id, readAt: '2026-09-06T10:11:12.345Z' });
+const cancellationNotification = (id = 'cancel1', extra = {}) => notification(id, { type: 'LOBBY_CANCELLED', lobby: null, lobbyTitleSnapshot: 'Встреча <историческое название>', ...extra });
 const countReply = unreadCount => ({ unreadCount });
 
 test('unread store coalesces requests, discards an invalidated result/error and performs one trailing read', async () => {
@@ -366,13 +368,13 @@ test('actual provider survives tab close, initializes authenticated restore/logi
 });
 
 test('Activity receipt discovery invalidates the global count but aggregate zero cannot confirm a particular row', async () => {
-  for (const viaPage of [false, true]) {
+  for (const viaPage of [false, true]) for (const cancelled of [false, true]) {
     let readAt = null, countCalls = 0, writes = 0;
     const client = creationClient(async (url, options) => {
       if (url.endsWith('/auth/login')) return authReply(1);
       if (url.endsWith('/unread-count')) { countCalls++; return new Response(JSON.stringify(countReply(readAt ? 0 : 1))); }
       if (options.method === 'POST') { writes++; readAt = readReceipt('n1').readAt; throw Error('lost after commit'); }
-      return new Response(JSON.stringify(page([notification('n1', { readAt })], 'next')));
+      return new Response(JSON.stringify(page([(cancelled ? cancellationNotification : notification)('n1', { readAt })], 'next')));
     });
     await client.login({ email: 'a@example.test', password: 'fixture' });
     const count = new countLogic.UnreadCountStore(() => client.getNotificationUnreadCount());
@@ -441,7 +443,7 @@ test('actual BottomNav badge 0/1/99/100+ and unknown/error uses RU/EN accessibil
     state = countLogic.emptyUnreadCount(null); assert.equal(byId(activityButton(), 'notification-count-badge'), undefined); h.unmount(); buttonHost.unmount();
   }
 });
-function activityHost(api = {}) {
+function activityHost(api = {}, language = 'ru') {
   const auth = { user: { id: 'A' }, lobbyApi: api instanceof ApiClient ? api : { listNotifications: async () => page([notification()]), readNotification: async id => readReceipt(id), ...api } };
   let store;
   const detailHost = host(auth), detailComponents = detailHost.load('src/features/home/LiveLobbyDetails.tsx');
@@ -451,7 +453,7 @@ function activityHost(api = {}) {
     '../features/activity/activity': { ...activityLogic, ActivityStore: class extends activityLogic.ActivityStore { constructor(api) { super(api); store = this; } } },
     '../features/home/LiveLobbyDetails': { LiveLobbyDetails: 'LiveLobbyDetails', CancelledLobbyNotice: detailComponents.CancelledLobbyNotice },
     '../features/profile/AvatarImage': { AvatarImage: 'AvatarImage' }, '../theme': { colors: {} },
-    '../i18n/LocalizationProvider': { useI18n: () => ({ t: createTranslator('ru'), language: 'ru' }) },
+    '../i18n/LocalizationProvider': { useI18n: () => ({ t: createTranslator(language), language }) },
   });
   const render = () => h.render(ActivityScreen, {});
   const details = () => nodes(render()).find(n => n.type === 'LiveLobbyDetails');
@@ -653,6 +655,76 @@ test('Activity handles deleted actor, hidden lobby and real details/back without
   detail.props.onClose(); await flush(); assert.equal(nodes(c.render()).find(n => n.type === 'LiveLobbyDetails'), undefined); assert.equal(reads, 2);
   byId(c.render(), 'notification-lobby-n1').props.onPress(); c.render(); detail.props.onClose(); assert.ok(nodes(c.render()).find(n => n.type === 'LiveLobbyDetails'));
   c.auth.user = { id: 'B' }; c.render(); assert.equal(nodes(c.render()).find(n => n.type === 'LiveLobbyDetails'), undefined); c.h.unmount();
+});
+
+test('Activity renders cancellation history in RU/EN with literal title, safe fallbacks and no lobby link', async () => {
+  for (const language of ['ru', 'en']) {
+    const c = activityHost({ listNotifications: async () => page([
+      cancellationNotification(), cancellationNotification('missing', { actor: null, lobbyTitleSnapshot: null }),
+      // Defensive UI: even an inconsistent projection cannot expose a cancelled lobby.
+      cancellationNotification('linked', { lobby: { id: lobby.id, title: 'Hidden current title' } }), notification(),
+    ]) }, language);
+    c.render(); await flush(); const tree = c.render(), row = byId(tree, 'notification-cancel1');
+    assert.match(texts(row), language === 'ru' ? /Лобби отменено. Организатор:/ : /Lobby cancelled. Organizer:/);
+    assert.match(texts(row), /Встреча <историческое название>/); assert.match(texts(row), /Настоящее <имя>/);
+    assert.match(texts(row), /2026/); assert.ok(byId(row, 'unread-cancel1'));
+    assert.equal(nodes(row).some(n => n.props?.dangerouslySetInnerHTML), false);
+    const missing = byId(tree, 'notification-missing');
+    assert.match(texts(missing), language === 'ru' ? /Удалённый пользователь/ : /Deleted user/);
+    assert.match(texts(missing), language === 'ru' ? /название недоступно/ : /title unavailable/);
+    assert.equal(nodes(missing).find(n => n.type === 'AvatarImage').props.avatar, null);
+    for (const id of ['cancel1', 'missing', 'linked']) assert.equal(byId(tree, `notification-lobby-${id}`), undefined);
+    assert.ok(byId(tree, 'notification-lobby-n1')); assert.doesNotMatch(texts(tree), /Hidden current title/);
+    c.h.unmount();
+  }
+});
+
+test('cancellation read uses the real ApiClient and server total, not local decrements; stale pages cannot undo it', async () => {
+  let readAt = null, posts = 0, counts = 0;
+  const post = deferred(), oldPage = deferred();
+  const client = creationClient(async (url, options) => {
+    if (url.endsWith('/auth/login')) return authReply(1);
+    if (url.endsWith('/unread-count')) { counts++; return new Response(JSON.stringify(countReply(readAt ? 4 : 5))); }
+    if (url.includes('/notifications/cancel1/read')) {
+      assert.equal(options.method, 'POST'); assert.equal(options.body, undefined); posts++; return post.promise;
+    }
+    if (url.includes('after=')) return oldPage.promise;
+    return new Response(JSON.stringify(page([cancellationNotification()], 'next')));
+  });
+  await client.login({ email: 'a@example.test', password: 'fixture' });
+  const count = new countLogic.UnreadCountStore(() => client.getNotificationUnreadCount());
+  const unsub = getNotificationInvalidation(client).subscribe(count.invalidate); count.setAccount('A');
+  const c = activityHost(client); c.render(); await flush(); assert.equal(count.getSnapshot().unreadCount, 5);
+  byId(c.render(), 'activity-more').props.onPress();
+  const send = byId(c.render(), 'mark-read-cancel1').props.onPress; send(); send(); await flush();
+  assert.equal(posts, 1); assert.ok(byId(c.render(), 'unread-cancel1')); assert.equal(count.getSnapshot().unreadCount, 5);
+  const updated = deferred(); const observe = count.subscribe(() => { if (!count.getSnapshot().stale && count.getSnapshot().unreadCount === 4) updated.resolve(); });
+  const before = counts; readAt = readReceipt('cancel1').readAt; post.resolve(new Response(JSON.stringify(readReceipt('cancel1')))); await updated.promise; observe();
+  assert.equal(counts, before + 1); assert.equal(count.getSnapshot().unreadCount, 4);
+  oldPage.resolve(new Response(JSON.stringify(page([cancellationNotification()], null)))); await flush();
+  assert.ok(byId(c.render(), 'read-cancel1')); assert.equal(c.state().items[0].readAt, readAt);
+  assert.equal(c.state().readErrors.cancel1, undefined); assert.equal(byId(c.render(), 'mark-read-cancel1'), undefined);
+  c.h.unmount(); unsub(); count.setAccount(null);
+});
+
+test('cancellation history and late GET/POST cannot escape account/logout/recovery/unmount boundaries', async () => {
+  for (const transition of ['account', 'logout', 'recovery', 'unmount']) for (const operation of ['get', 'post']) {
+    const late = deferred(); let reads = 0;
+    const c = activityHost({ listNotifications: async () => ++reads === 1 ? page([cancellationNotification()]) : late.promise,
+      readNotification: () => late.promise });
+    c.render(); await flush();
+    byId(c.render(), operation === 'get' ? 'activity-refresh' : 'mark-read-cancel1').props.onPress();
+    if (transition === 'unmount') c.h.unmount();
+    else {
+      if (transition === 'account') c.auth.user = { id: 'B' };
+      else if (transition === 'logout') c.auth.user = null;
+      else c.auth.storageRecoveryRequired = true;
+      c.auth.lobbyApi.listNotifications = async () => page(); c.render();
+    }
+    late.resolve(operation === 'get' ? page([cancellationNotification()]) : readReceipt('cancel1')); await flush();
+    assert.equal(byId(c.render(), 'notification-cancel1'), undefined); assert.deepEqual(c.state().items, []);
+    c.h.unmount();
+  }
 });
 
 test('unavailable notification action blocks repeats but leaves Activity and its history understandable', async () => {

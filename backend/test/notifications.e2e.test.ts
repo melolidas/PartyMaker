@@ -60,10 +60,11 @@ test('unread count requires Bearer, rejects every query parameter and documents 
 
 test('database unread total is recipient/type/read scoped across pages and survives null relations/cancellation', async () => {
   const id = await lobby(), ids = Array.from({ length: 53 }, () => randomUUID());
-  await prisma.notification.createMany({ data: ids.map((noteId, index) => ({ id: noteId, recipientId: users[0]!, type: 'LOBBY_JOINED' as const,
+  await prisma.notification.createMany({ data: ids.map((noteId, index) => ({ id: noteId, recipientId: users[0]!, type: index % 2 ? 'LOBBY_CANCELLED' as const : 'LOBBY_JOINED' as const,
     actorId: index % 2 ? users[1]! : null, lobbyId: index % 3 ? id : null })) });
   await prisma.notification.createMany({ data: [
     { recipientId: users[0]!, type: 'LOBBY_JOINED', readAt: new Date() },
+    { recipientId: users[0]!, type: 'LOBBY_CANCELLED', readAt: new Date() },
     { recipientId: users[1]!, type: 'LOBBY_JOINED' },
     ...(['LOBBY_INVITED', 'MOMENT_LIKED', 'MOMENT_COMMENTED'] as const).map(type => ({ recipientId: users[0]!, type })),
   ] });
@@ -78,6 +79,10 @@ test('database unread total is recipient/type/read scoped across pages and survi
   assert.deepEqual((await unreadCount().expect(200)).body, { unreadCount: 52 });
   await read(ids[1]!, 1).expect(404);
   assert.deepEqual((await unreadCount().expect(200)).body, { unreadCount: 52 });
+  const cancelledReceipt = (await read(ids[1]!).expect(200)).body;
+  const concurrent = await Promise.all([read(ids[1]!).expect(200), read(ids[1]!).expect(200)]);
+  for (const response of concurrent) assert.deepEqual(response.body, cancelledReceipt);
+  assert.deepEqual((await unreadCount().expect(200)).body, { unreadCount: 51 });
   // Preserve existing test baselines, remove only exact rows created above for this test.
   await prisma.notification.deleteMany({ where: { recipientId: { in: [users[0]!, users[1]!] } } });
 });
@@ -139,7 +144,7 @@ test('two concurrent joins by the same user create exactly one membership and on
 
 test('list filters recipient AND supported type before stable equal-timestamp cursor pagination', async () => {
   const id = await lobby(), createdAt = new Date('2300-01-01T00:00:00.000Z'), expected: string[] = [];
-  for (let i = 0; i < 5; i++) expected.push((await prisma.notification.create({ data: { recipientId: users[2]!, actorId: users[1]!, lobbyId: id, type: 'LOBBY_JOINED', createdAt } })).id);
+  for (let i = 0; i < 5; i++) expected.push((await prisma.notification.create({ data: { recipientId: users[2]!, actorId: users[1]!, lobbyId: id, type: i % 2 ? 'LOBBY_CANCELLED' : 'LOBBY_JOINED', createdAt } })).id);
   for (const type of ['LOBBY_INVITED', 'MOMENT_LIKED', 'MOMENT_COMMENTED'] as const) await prisma.notification.create({ data: { recipientId: users[2]!, type, createdAt: '2301-01-01T00:00:00.000Z' } });
   await prisma.notification.create({ data: { recipientId: users[3]!, type: 'LOBBY_JOINED', createdAt: '2301-01-01T00:00:00.000Z' } });
   const seen: string[] = []; let next: string | null = null;
@@ -148,6 +153,8 @@ test('list filters recipient AND supported type before stable equal-timestamp cu
     seen.push(...page.items.map(row => row.id)); next = page.nextCursor;
   } while (next);
   assert.deepEqual(seen, expected.sort().reverse());
+  const mixed = (await list(2).expect(200)).body.items;
+  assert.deepEqual([...new Set(mixed.map((row: { type: string }) => row.type))].sort(), ['LOBBY_CANCELLED', 'LOBBY_JOINED']);
   assert.equal((await list(3).expect(200)).body.items.length, 1);
 });
 
@@ -158,7 +165,9 @@ test('safe live projections hide cancelled/draft/completed lobbies, deleted acto
   await prisma.mediaAsset.create({ data: { id: mediaId, ownerId: users[1]!, kind: 'IMAGE', storageKey: `avatars/${mediaId}.jpg`, mimeType: 'image/jpeg', width: 512, height: 512, bytes: 300 } });
   await prisma.user.update({ where: { id: users[1]! }, data: { avatarMediaId: mediaId, displayName: 'Current <name>' } });
   await prisma.lobby.update({ where: { id }, data: { title: 'Current title' } });
-  const result = await row(); assert.deepEqual(Object.keys(result).sort(), ['actor', 'createdAt', 'id', 'lobby', 'readAt', 'type']);
+  await prisma.notification.update({ where: { id: note.id }, data: { lobbyTitleSnapshot: 'Never expose a JOINED snapshot' } });
+  const result = await row(); assert.deepEqual(Object.keys(result).sort(), ['actor', 'createdAt', 'id', 'lobby', 'lobbyTitleSnapshot', 'readAt', 'type']);
+  assert.equal(result.lobbyTitleSnapshot, null);
   assert.deepEqual(Object.keys(result.actor).sort(), ['avatar', 'displayName', 'handle', 'id']);
   assert.deepEqual(result.actor.avatar, { id: mediaId, mimeType: 'image/jpeg', width: 512, height: 512 });
   assert.equal(result.actor.displayName, 'Current <name>'); assert.deepEqual(result.lobby, { id, title: 'Current title' });
@@ -202,4 +211,60 @@ test('strict query/body/cursor validation and Bearer requirements are documented
   await read(id).query({ userId: users[0] }).expect(400); await read('bad').expect(400);
   const docs = (await request(app.getHttpServer()).get('/docs-json').expect(200)).body;
   assert.ok(docs.paths['/api/v1/notifications'].get.security); assert.ok(docs.paths['/api/v1/notifications/{id}/read'].post.responses['404']);
+  assert.deepEqual(docs.components.schemas.NotificationDto.properties.type.enum, ['LOBBY_JOINED', 'LOBBY_CANCELLED']);
+  assert.equal(docs.components.schemas.NotificationDto.properties.lobbyTitleSnapshot.maxLength, 40);
+});
+
+test('cancellation snapshots the current title for JOINED recipients only; preserves all prior records on replay', async () => {
+  const id = await lobby();
+  await action(id).expect(200);
+  await prisma.lobbyMember.createMany({ data: [
+    { lobbyId: id, userId: users[2]!, status: 'LEFT', leftAt: new Date() },
+    { lobbyId: id, userId: users[3]!, status: 'REMOVED', leftAt: new Date() },
+  ] });
+  await prisma.lobby.update({ where: { id }, data: { title: 'Название <на момент отмены>' } });
+  const members = await prisma.lobbyMember.findMany({ where: { lobbyId: id }, orderBy: { userId: 'asc' } });
+  const before = await notes(id), countBefore = (await unreadCount().expect(200)).body;
+  await action(id, 'cancel', 0).expect(200);
+  const all = await notes(id), cancelled = all.filter(row => row.type === 'LOBBY_CANCELLED');
+  assert.equal(cancelled.length, 1);
+  assert.equal(cancelled[0]!.recipientId, users[1]); assert.equal(cancelled[0]!.actorId, users[0]);
+  assert.equal(cancelled[0]!.lobbyTitleSnapshot, 'Название <на момент отмены>');
+  assert.deepEqual(all.filter(row => row.type !== 'LOBBY_CANCELLED'), before);
+  assert.deepEqual((await unreadCount().expect(200)).body, countBefore, 'no increase for organizer');
+  assert.deepEqual(await prisma.lobbyMember.findMany({ where: { lobbyId: id }, orderBy: { userId: 'asc' } }), members);
+  await action(id, 'cancel', 0).expect(200); assert.deepEqual(await notes(id), all);
+  await prisma.lobby.update({ where: { id }, data: { title: 'Later hidden title', startsAt: '2000-01-01T00:00:00.000Z' } });
+  await action(id, 'cancel', 0).expect(200); assert.deepEqual(await notes(id), all);
+  const result = (await list(1).expect(200)).body.items.find((row: { id: string }) => row.id === cancelled[0]!.id);
+  assert.equal(result.type, 'LOBBY_CANCELLED'); assert.equal(result.lobby, null);
+  assert.equal(result.lobbyTitleSnapshot, 'Название <на момент отмены>');
+  assert.deepEqual(Object.keys(result).sort(), ['actor', 'createdAt', 'id', 'lobby', 'lobbyTitleSnapshot', 'readAt', 'type']);
+  assert.doesNotMatch(JSON.stringify(result), /email|recipientId|passwordHash|tokenHash|storageKey|Later hidden title/);
+  await read(cancelled[0]!.id, 0).expect(404);
+  const receipts = await overlap('Notification', cancelled[0]!.id, [() => read(cancelled[0]!.id, 1).then(r => r), () => read(cancelled[0]!.id, 1).then(r => r)]);
+  assert.equal(receipts[0]!.status, 200); assert.deepEqual(receipts[0]!.body, receipts[1]!.body);
+});
+
+test('failure after notification batch insertion rolls back cancellation AND every inserted event', async () => {
+  const id = await lobby(); await action(id).expect(200); await action(id, 'join', 2).expect(200);
+  const before = await prisma.lobby.findUniqueOrThrow({ where: { id }, include: { members: { orderBy: { userId: 'asc' } }, messages: true } });
+  const previousNotes = await notes(id); let inserted = 0;
+  const faulted = prisma.$extends({ query: { notification: { async createMany({ args, query }) {
+    const result = await query(args); inserted = result.count; throw new Error('Isolated cancellation notification failure');
+  } } } });
+  await assert.rejects(new LobbiesService(faulted as unknown as PrismaService).cancel(id, users[0]!), /Isolated cancellation notification failure/);
+  assert.equal(inserted, 2, 'inserts actually executed inside the rolled-back PostgreSQL transaction');
+  assert.deepEqual(await prisma.lobby.findUniqueOrThrow({ where: { id }, include: { members: { orderBy: { userId: 'asc' } }, messages: true } }), before);
+  assert.deepEqual(await notes(id), previousNotes);
+  await action(id, 'cancel', 0).expect(200);
+  assert.equal((await notes(id)).filter(row => row.type === 'LOBBY_CANCELLED').length, 2);
+});
+
+test('cancellation DTO handles missing snapshots/actors and never grants lobby access, even for a PUBLISHED relation', async () => {
+  const id = await lobby();
+  const row = await prisma.notification.create({ data: { recipientId: users[1]!, lobbyId: id, type: 'LOBBY_CANCELLED' } });
+  const result = (await list(1).expect(200)).body.items.find((item: { id: string }) => item.id === row.id);
+  assert.equal(result.actor, null); assert.equal(result.lobby, null); assert.equal(result.lobbyTitleSnapshot, null);
+  assert.equal(result.readAt, null); assert.equal(result.type, 'LOBBY_CANCELLED');
 });

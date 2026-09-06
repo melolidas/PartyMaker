@@ -1,7 +1,8 @@
 import type { Avatar } from './types';
 
 export type LobbyNotification = {
-  id: string; type: 'LOBBY_JOINED'; createdAt: string; readAt: string | null;
+  id: string; type: 'LOBBY_JOINED' | 'LOBBY_CANCELLED'; createdAt: string; readAt: string | null;
+  lobbyTitleSnapshot: string | null;
   actor: { id: string; displayName: string; handle: string; avatar: Avatar | null } | null;
   lobby: { id: string; title: string } | null;
 };

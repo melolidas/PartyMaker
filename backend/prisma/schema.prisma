@@ -52,6 +52,7 @@ enum InviteStatus {
 
 enum NotificationType {
   LOBBY_JOINED
+  LOBBY_CANCELLED
   MOMENT_COMMENTED
   MOMENT_LIKED
   LOBBY_INVITED
@@ -275,6 +276,7 @@ model Notification {
   actorId     String?          @map("actor_id") @db.Uuid
   type        NotificationType
   lobbyId     String?          @map("lobby_id") @db.Uuid
+  lobbyTitleSnapshot String?   @map("lobby_title_snapshot") @db.VarChar(40)
   momentId    String?          @map("moment_id") @db.Uuid
   commentId   String?          @map("comment_id") @db.Uuid
   readAt      DateTime?        @map("read_at") @db.Timestamptz(3)

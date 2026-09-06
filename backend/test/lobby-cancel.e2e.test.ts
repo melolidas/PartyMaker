@@ -128,19 +128,37 @@ test('overlapping cancel/cancel coalesces database effect with two identical suc
   assert.deepEqual(results.map(r => r.status), [200, 200]); assert.deepEqual(results[0]!.body, results[1]!.body);
   const first = await prisma.lobby.findUniqueOrThrow({ where: { id } }); await post(id).expect(200);
   assert.deepEqual(await prisma.lobby.findUniqueOrThrow({ where: { id } }), first);
+  const notices = await prisma.notification.findMany({ where: { lobbyId: id, type: 'LOBBY_CANCELLED' } });
+  assert.deepEqual(notices.map(row => row.recipientId), [users[1]]);
 });
 
-test('overlapping cancel/join and cancel/send serialize both orders and preserve preceding effects', async () => {
-  for (const action of ['join', 'messages']) for (const cancelFirst of [true, false]) {
+test('overlapping cancel/join, cancel/leave and cancel/send serialize both orders and snapshot the right recipients', async () => {
+  for (const action of ['join', 'leave', 'messages']) for (const cancelFirst of [true, false]) {
     const id = await lobby();
-    const mutation = () => (action === 'join' ? post(id, action, 2) : post(id, action, 1).send({ clientMessageId: randomUUID(), body: 'Concurrent' })).then(r => r);
+    const mutation = () => (action === 'join' ? post(id, action, 2) : action === 'leave' ? post(id, action, 1) : post(id, action, 1).send({ clientMessageId: randomUUID(), body: 'Concurrent' })).then(r => r);
     const cancel = () => post(id).then(r => r);
     const responses = await overlap(id, cancelFirst ? [cancel, mutation] : [mutation, cancel]);
-    assert.deepEqual(responses.map(r => r.status), cancelFirst ? [200, 404] : [action === 'join' ? 200 : 201, 200]);
-    const count = action === 'join' ? await prisma.lobbyMember.count({ where: { lobbyId: id, userId: users[2]! } }) : await prisma.lobbyMessage.count({ where: { lobbyId: id } });
-    assert.equal(count, cancelFirst ? 0 : 1);
+    assert.deepEqual(responses.map(r => r.status), cancelFirst ? [200, 404] : [action === 'messages' ? 201 : 200, 200]);
+    if (action !== 'leave') {
+      const count = action === 'join' ? await prisma.lobbyMember.count({ where: { lobbyId: id, userId: users[2]! } }) : await prisma.lobbyMessage.count({ where: { lobbyId: id } });
+      assert.equal(count, cancelFirst ? 0 : 1);
+    } else assert.equal((await prisma.lobbyMember.findUniqueOrThrow({ where: { lobbyId_userId: { lobbyId: id, userId: users[1]! } } })).status, cancelFirst ? 'JOINED' : 'LEFT');
+    const recipients = (await prisma.notification.findMany({ where: { lobbyId: id, type: 'LOBBY_CANCELLED' } })).map(row => row.recipientId).sort();
+    const expected = action === 'leave' && !cancelFirst ? [] : action === 'join' && !cancelFirst ? [users[1], users[2]] : [users[1]];
+    assert.deepEqual(recipients, expected.sort());
     assert.equal((await prisma.lobby.findUniqueOrThrow({ where: { id } })).status, 'CANCELLED');
   }
+});
+
+test('overlapping edit/cancel snapshots the title after the preceding edit commit under the same lock', async () => {
+  const id = await lobby();
+  const responses = await overlap(id, [
+    () => request(app.getHttpServer()).patch(`/api/v1/lobbies/${id}`).auth(tokens[0]!, { type: 'bearer' }).send({ title: 'Edited before cancellation' }).then(r => r),
+    () => post(id).then(r => r),
+  ]);
+  assert.deepEqual(responses.map(r => r.status), [200, 200]);
+  const rows = await prisma.notification.findMany({ where: { lobbyId: id, type: 'LOBBY_CANCELLED' } });
+  assert.equal(rows.length, 1); assert.equal(rows[0]!.lobbyTitleSnapshot, 'Edited before cancellation');
 });
 
 test('Swagger documents owner cancellation, replay and safe response/error codes', async () => {

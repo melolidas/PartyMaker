@@ -45,9 +45,9 @@ export function ActivityScreen() {
       {current.items.map(item => <View testID={`notification-${item.id}`} key={item.id} style={styles.row}>
         <AvatarImage avatar={item.actor?.avatar ?? null} size={43} reloadKey={imageAttempt} />
         <View style={styles.body}>
-          <Text style={styles.message}>{t('activity.joinEvent')} <Text style={styles.user}>{item.actor?.displayName ?? t('activity.unknownActor')}</Text></Text>
+          <Text style={styles.message}>{t(item.type === 'LOBBY_CANCELLED' ? 'activity.cancelEvent' : 'activity.joinEvent')} <Text style={styles.user}>{item.actor?.displayName ?? t('activity.unknownActor')}</Text></Text>
           {item.actor ? <Text style={styles.hint}>@{item.actor.handle}</Text> : null}
-          <Text style={styles.message}>{item.lobby?.title ?? t('activity.unavailableLobby')}</Text>
+          <Text style={styles.message}>{item.type === 'LOBBY_CANCELLED' ? item.lobbyTitleSnapshot ?? t('activity.unknownCancelledTitle') : item.lobby?.title ?? t('activity.unavailableLobby')}</Text>
           <Text style={styles.hint}>{new Date(item.createdAt).toLocaleString(language === 'ru' ? 'ru-RU' : 'en-US', { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</Text>
           {!item.readAt ? <Text testID={`unread-${item.id}`} style={styles.unread}>{t('activity.unread')}</Text> : <Text testID={`read-${item.id}`} style={styles.hint}>{t('activity.read')}</Text>}
           {current.readErrors[item.id] ? <Text testID={`read-error-${item.id}`} accessibilityLiveRegion="polite" style={styles.hint}>{t(current.readErrors[item.id] === 'unavailable' ? 'activity.unavailableNotification' : 'activity.readUnconfirmed')}</Text> : null}
@@ -55,7 +55,7 @@ export function ActivityScreen() {
             {!item.readAt ? <Pressable testID={`mark-read-${item.id}`} accessibilityRole="button" disabled={!account || !!current.marking[item.id] || current.readErrors[item.id] === 'unavailable'} onPress={() => void store.markRead(item.id)}>
               {current.marking[item.id] ? <ActivityIndicator color={colors.text} /> : <Text style={styles.link}>{t(current.readErrors[item.id] ? 'activity.retryRead' : 'activity.markRead')}</Text>}
             </Pressable> : null}
-            {item.lobby ? <Pressable testID={`notification-lobby-${item.id}`} accessibilityRole="button" disabled={!account}
+            {item.type === 'LOBBY_JOINED' && item.lobby ? <Pressable testID={`notification-lobby-${item.id}`} accessibilityRole="button" disabled={!account}
               onPress={() => {
                 if (account && item.lobby && activeAccount.current === account) {
                   const opening = { account, id: item.lobby.id };

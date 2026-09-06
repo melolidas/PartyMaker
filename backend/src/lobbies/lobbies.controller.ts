@@ -53,7 +53,7 @@ export class LobbiesController {
 
   @Post(':id/cancel')
   @HttpCode(200)
-  @ApiOperation({ summary: 'Cancel a future published lobby as its organizer', description: 'No body or query fields. Organizer comes from Lobby.organizerId, not membership. CANCELLED replay by the organizer is a no-op even after startsAt; timestamps and all membership/message history are preserved. Cancelled lobbies disappear from catalogs/inbox and chat becomes unavailable. No restore or physical deletion.' })
+  @ApiOperation({ summary: 'Cancel a future published lobby as its organizer', description: 'No body or query fields. Organizer comes from Lobby.organizerId, not membership. CANCELLED replay by the organizer is a no-op even after startsAt; timestamps and all membership/message history are preserved. First cancellation atomically creates one LOBBY_CANCELLED notification per current JOINED participant except the organizer, with a title snapshot under the shared Lobby lock. Cancelled lobbies disappear from catalogs/inbox and chat becomes unavailable. No restore or physical deletion.' })
   @ApiOkResponse({ type: CancelLobbyResponseDto })
   @ApiForbiddenResponse({ type: ApiErrorResponseDto, description: 'LOBBY_ORGANIZER_REQUIRED: non-organizer of a PUBLISHED lobby' })
   @ApiNotFoundResponse({ type: ApiErrorResponseDto, description: 'LOBBY_NOT_FOUND: missing/DRAFT/COMPLETED, or CANCELLED for a non-organizer' })

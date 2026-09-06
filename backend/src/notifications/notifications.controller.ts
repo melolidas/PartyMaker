@@ -13,7 +13,7 @@ import { NotificationsService } from './notifications.service';
 export class NotificationsController {
   constructor(@Inject(NotificationsService) private readonly notifications: NotificationsService) {}
   @Get('unread-count')
-  @ApiOperation({ summary: 'Count own unread LOBBY_JOINED notifications', description: 'No query parameters. Exact database count across all pages; null actor/lobby and cancelled lobbies do not exclude notifications. No other types.' })
+  @ApiOperation({ summary: 'Count own unread LOBBY_JOINED and LOBBY_CANCELLED notifications', description: 'No query parameters. Exact database count across all pages; null actor/lobby, current membership and lobby status do not exclude notifications. No other types.' })
   @ApiOkResponse({ type: NotificationUnreadCountDto })
   unreadCount(@CurrentAuth() auth: AuthContext, @Query() query: Record<string, unknown>): Promise<NotificationUnreadCountDto> {
     if (Object.keys(query).length) throw new BadRequestException({ code: 'VALIDATION_FAILED', message: 'This endpoint accepts no query parameters' });
@@ -21,7 +21,7 @@ export class NotificationsController {
   }
   @Get()
   @ApiExtraModels(ListNotificationsQueryDto)
-  @ApiOperation({ summary: 'Own LOBBY_JOINED notifications', description: 'Recipient/type filter before pagination. Current actor/title, not historical snapshots. A past join does not guarantee current membership. One page snapshot; refresh/reopen for external updates. No push or polling.' })
+  @ApiOperation({ summary: 'Own LOBBY_JOINED and LOBBY_CANCELLED notifications', description: 'Shared supported-type/recipient filter before pagination. Current actor profile; JOINED exposes only a current PUBLISHED lobby. CANCELLED exposes a historical lobbyTitleSnapshot, never lobby access. A past join does not guarantee current membership. One page snapshot; refresh/reopen for external updates. No push or polling.' })
   @ApiOkResponse({ type: NotificationPageDto })
   list(@CurrentAuth() auth: AuthContext, @Query() query: ListNotificationsQueryDto): Promise<NotificationPageDto> {
     return this.notifications.list(auth.userId, query);

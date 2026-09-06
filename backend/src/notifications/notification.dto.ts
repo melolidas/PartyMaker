@@ -2,6 +2,7 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
 import { IsInt, IsString, Max, MaxLength, Min, ValidateIf } from 'class-validator';
 import { AvatarDto } from '../avatars/avatar.dto';
+import { supportedNotificationTypes, type SupportedNotificationType } from './supported-notification-types';
 
 export class ListNotificationsQueryDto {
   @ApiPropertyOptional({ type: 'integer', minimum: 1, maximum: 50, default: 20 })
@@ -23,11 +24,12 @@ export class NotificationLobbyDto {
 }
 export class NotificationDto {
   @ApiProperty({ format: 'uuid' }) id!: string;
-  @ApiProperty({ enum: ['LOBBY_JOINED'] }) type!: 'LOBBY_JOINED';
+  @ApiProperty({ enum: [...supportedNotificationTypes] }) type!: SupportedNotificationType;
+  @ApiProperty({ type: String, nullable: true, maxLength: 40, description: 'Title at cancellation, only for LOBBY_CANCELLED; null for LOBBY_JOINED. Does not grant lobby access.' }) lobbyTitleSnapshot!: string | null;
   @ApiProperty({ format: 'date-time' }) createdAt!: string;
   @ApiProperty({ type: String, format: 'date-time', nullable: true }) readAt!: string | null;
   @ApiProperty({ type: NotificationActorDto, nullable: true, description: 'Current actor profile, not a historical snapshot; null if deleted' }) actor!: NotificationActorDto | null;
-  @ApiProperty({ type: NotificationLobbyDto, nullable: true, description: 'Current title, only while PUBLISHED; otherwise null' }) lobby!: NotificationLobbyDto | null;
+  @ApiProperty({ type: NotificationLobbyDto, nullable: true, description: 'Current PUBLISHED lobby for LOBBY_JOINED only; otherwise null' }) lobby!: NotificationLobbyDto | null;
 }
 export class NotificationPageDto {
   @ApiProperty({ type: [NotificationDto] }) items!: NotificationDto[];
@@ -38,5 +40,5 @@ export class NotificationReadDto {
   @ApiProperty({ format: 'date-time', description: 'First confirmed read timestamp, never rewritten on retry' }) readAt!: string;
 }
 export class NotificationUnreadCountDto {
-  @ApiProperty({ type: 'integer', minimum: 0, description: 'All own unread LOBBY_JOINED notifications, including null actor/lobby' }) unreadCount!: number;
+  @ApiProperty({ type: 'integer', minimum: 0, description: 'All own unread LOBBY_JOINED and LOBBY_CANCELLED notifications, including null actor/lobby' }) unreadCount!: number;
 }

@@ -175,7 +175,7 @@ export class LobbiesService {
     return this.prisma.$transaction(async tx => {
       // Same parent lock as join/leave/send. Re-read after any preceding commit.
       await tx.$queryRaw`SELECT id FROM "Lobby" WHERE id = ${id}::uuid FOR UPDATE`;
-      const lobby = await tx.lobby.findUnique({ where: { id }, select: { status: true, organizerId: true, startsAt: true } });
+      const lobby = await tx.lobby.findUnique({ where: { id }, select: { status: true, organizerId: true, startsAt: true, title: true } });
       if (!lobby || (lobby.status !== 'PUBLISHED' && lobby.status !== 'CANCELLED')
         || (lobby.status === 'CANCELLED' && lobby.organizerId !== userId)) {
         throw new NotFoundException({ code: 'LOBBY_NOT_FOUND', message: 'Lobby not found' });
@@ -189,6 +189,13 @@ export class LobbiesService {
         throw new ConflictException({ code: 'LOBBY_STARTED', message: 'A started lobby cannot be cancelled' });
       }
       await tx.lobby.update({ where: { id }, data: { status: 'CANCELLED' } });
+      // All membership/edit writers take this same parent lock. Snapshot the
+      // title and current recipients here; a CANCELLED replay never inserts.
+      const recipients = await tx.lobbyMember.findMany({ where: { lobbyId: id, status: 'JOINED', userId: { not: lobby.organizerId } }, select: { userId: true } });
+      if (recipients.length) await tx.notification.createMany({ data: recipients.map(member => ({
+        recipientId: member.userId, actorId: lobby.organizerId, lobbyId: id,
+        type: 'LOBBY_CANCELLED', lobbyTitleSnapshot: lobby.title,
+      })) });
       return { id, status: 'CANCELLED' };
     }, { isolationLevel: 'ReadCommitted' });
   }

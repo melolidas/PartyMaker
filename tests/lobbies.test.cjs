@@ -22,6 +22,7 @@ const membersLogic = require('../.expo/lobby-tests/features/home/lobbyMembers.js
 const editLogic = require('../.expo/lobby-tests/features/home/editLobbyForm.js');
 const activityLogic = require('../.expo/lobby-tests/features/activity/activity.js');
 const countLogic = require('../.expo/lobby-tests/features/activity/unreadCount.js');
+const historyLogic = require('../.expo/lobby-tests/features/profile/lobbyHistory.js');
 const { getNotificationInvalidation } = require('../.expo/lobby-tests/api/notificationInvalidation.js');
 
 const lobby = {
@@ -134,6 +135,152 @@ function texts(tree) {
   return tree && typeof tree === 'object' ? texts(tree.props?.children) : '';
 }
 const byId = (tree, id) => nodes(tree).find(n => n.props?.testID === id);
+
+const historyItem = (id = 'past') => ({ id, title: 'demo.pizza <real title>', description: 'Plain <description>', category: 'FOOD',
+  startsAt: '2020-01-01T00:30:00.000Z', timeZone: 'America/New_York', isOnline: false, venueName: 'Real venue', isOrganizer: false });
+function historyHost(api = {}, language = 'ru', suppliedAuth) {
+  const auth = suppliedAuth ?? { user: { id: 'A', displayName: 'Current profile', handle: 'current', bio: 'Unsaved-independent bio', avatar: null, extroversionLevel: 5.5 },
+    status: 'authenticated', storageRecoveryRequired: false, lobbyApi: { listLobbyHistory: async () => page(), ...api } };
+  const h = host(auth);
+  const component = h.load('src/features/profile/ProfileLobbyHistory.tsx', { './lobbyHistory': historyLogic,
+    '../home/lobbyFeed': { formatLobbyStartsAt }, '../../i18n/LocalizationProvider': { useI18n: () => ({ t: createTranslator(language), language }) } });
+  const render = () => h.render(component.LobbyHistory);
+  const rows = tree => nodes(tree ?? render()).filter(n => n.type === component.LobbyHistoryCard).map(n => n.props.lobby);
+  return { ...h, auth, render, rows, card: item => h.render(component.LobbyHistoryCard, { lobby: item }) };
+}
+function profileHistoryHost(api = {}, language = 'ru') {
+  const auth = { user: { id: 'A', displayName: 'Current profile', handle: 'current', bio: 'Independent bio', avatar: null, extroversionLevel: 5.5 },
+    status: 'authenticated', storageRecoveryRequired: false, lobbyApi: { listLobbyHistory: async () => page(), ...api } };
+  const h = host(auth);
+  const native = Object.fromEntries(['View','Text','Pressable','Image','ActivityIndicator'].map(v => [v,v]));
+  const { ProfileScreen } = h.load('src/screens/ProfileScreen.tsx', {
+    'react-native': { ...native, StyleSheet: { create: x => x }, useWindowDimensions: () => ({ width: 400 }), AccessibilityInfo: { announceForAccessibility() {} }, Alert: { alert() {} } },
+    '@react-native-community/slider': 'Slider', 'expo-linear-gradient': { LinearGradient: 'LinearGradient' },
+    '../api/errorMessages': { getRequestErrorTranslationKey: () => 'common.error.network' }, '../assets': { photos: {} },
+    '../auth/AuthProvider': { useAuthenticatedAuth: () => auth }, '../components/Primitives': { IconButton: 'IconButton' }, '../components/Screen': { Screen: 'Screen' },
+    '../features/profile/ExtroversionGauge': { ExtroversionGauge: 'Gauge' },
+    '../features/profile/extroversion': { getExtroversionBand: () => 'ambivert', getExtroversionVisual: () => ({ color: 'blue' }), normalizeExtroversionLevel: v => v },
+    '../features/profile/ProfileEditModal': { ProfileEditModal: 'ProfileEditModal' }, '../features/profile/AvatarImage': { AvatarImage: 'AvatarImage' },
+    '../features/profile/AvatarEditor': { AvatarEditor: 'AvatarEditor' }, '../features/profile/ProfileLobbyHistory': { LobbyHistory: 'HistoryMount' },
+    '../features/profile/saveExtroversion': {}, '../i18n/LocalizationProvider': { useI18n: () => ({ t: createTranslator(language), language }) }, '../theme': { colors: {}, radius: {} },
+  });
+  let child = null;
+  function render() {
+    const profile = h.render(ProfileScreen);
+    if (nodes(profile).some(n => n.type === 'HistoryMount')) child ??= historyHost({}, language, auth);
+    else { child?.unmount(); child = null; }
+    return { profile, history: child?.render() ?? null };
+  }
+  return { auth, render, rows: tree => child?.rows(tree) ?? [], unmount() { child?.unmount(); h.unmount(); } };
+}
+
+test('actual Profile switches Moments/demo and history without recreating header, avatar or open editors', async () => {
+  for (const language of ['ru', 'en']) {
+    let calls = 0; const p = profileHistoryHost({ listLobbyHistory: async () => { calls++; return page([historyItem()]); } }, language);
+    let tree = p.render(); assert.ok(byId(tree.profile, 'profile-stats')); assert.ok(byId(tree.profile, 'profile-demo-gallery')); assert.equal(calls, 0);
+    byId(tree.profile, 'change-avatar').props.onPress(); byId(p.render().profile, 'profile-edit-extroversion').props.onPress();
+    byId(p.render().profile, 'extroversion-slider').props.onValueChange(8);
+    byId(p.render().profile, 'profile-tab-lobbies').props.onPress(); tree = p.render();
+    assert.ok(tree.history); assert.equal(byId(tree.profile, 'profile-stats'), undefined); assert.equal(byId(tree.profile, 'profile-demo-gallery'), undefined);
+    assert.equal(byId(tree.profile, 'profile-tab-lobbies').props.accessibilityState.selected, true);
+    await flush(); tree = p.render(); assert.deepEqual(p.rows(tree.history).map(r => r.id), ['past']); assert.equal(calls, 1);
+    assert.ok(nodes(tree.profile).find(n => n.type === 'AvatarEditor')); assert.equal(byId(tree.profile, 'extroversion-slider').props.value, 8);
+    assert.equal(nodes(tree.profile).find(n => n.type === 'AvatarImage').props.avatar, null); assert.match(texts(tree.profile), /Current profile/);
+    byId(tree.profile, 'profile-tab-moments').props.onPress(); tree = p.render(); assert.equal(tree.history, null); assert.ok(byId(tree.profile, 'profile-stats'));
+    byId(tree.profile, 'profile-tab-lobbies').props.onPress(); p.render(); await flush(); assert.equal(calls, 2);
+    assert.equal(byId(p.render().profile, 'extroversion-slider').props.value, 8); p.unmount();
+  }
+});
+
+test('actual history renders loading/empty/error/retry, isolated page errors and deduplicated pagination with original cursor', async () => {
+  let next = deferred(); const calls = [], c = historyHost({ listLobbyHistory: after => { calls.push(after); return next.promise; } });
+  c.render(); assert.ok(byId(c.render(), 'history-loading')); assert.deepEqual(c.rows(), []);
+  next.resolve(page()); await flush(); assert.ok(byId(c.render(), 'history-empty'));
+  next = deferred(); byId(c.render(), 'history-refresh').props.onPress(); next.reject(Error('offline')); await flush();
+  assert.ok(byId(c.render(), 'history-error')); assert.deepEqual(c.rows(), []);
+  next = deferred(); byId(c.render(), 'history-retry').props.onPress(); next.resolve(page([historyItem('a'), historyItem('a')], 'page-2')); await flush();
+  assert.deepEqual(c.rows().map(r => r.id), ['a']);
+  next = deferred(); const more = byId(c.render(), 'history-more').props.onPress; more(); more(); assert.equal(calls.length, 4);
+  next.reject(Error('page offline')); await flush(); assert.deepEqual(c.rows().map(r => r.id), ['a']);
+  assert.match(texts(c.render()), /Ранее загруженная история сохранена/);
+  next = deferred(); byId(c.render(), 'history-retry').props.onPress(); assert.equal(calls.at(-1), 'page-2');
+  next.resolve(page([historyItem('a'), historyItem('b')], 'page-3')); await flush(); assert.deepEqual(c.rows().map(r => r.id), ['a', 'b']);
+  next = deferred(); byId(c.render(), 'history-refresh').props.onPress(); assert.equal(calls.at(-1), undefined); assert.deepEqual(c.rows(), []);
+  next.resolve(page([historyItem('new')])); await flush(); assert.deepEqual(c.rows().map(r => r.id), ['new']); c.unmount();
+});
+
+test('history cards are inert safe real strings, original timezone/date, category and RU/EN canonical roles', () => {
+  for (const language of ['ru', 'en']) {
+    const c = historyHost({}, language);
+    for (const isOrganizer of [false, true]) for (const isOnline of [false, true]) {
+      const item = { ...historyItem(), isOrganizer, isOnline, venueName: isOnline ? null : 'Real venue' }, tree = c.card(item);
+      assert.match(texts(tree), /demo.pizza <real title> Plain <description>/);
+      assert.ok(texts(tree).includes(formatLobbyStartsAt(item, language))); assert.match(texts(tree), /2019.*19:30.*America\/New_York/);
+      assert.ok(texts(tree).includes(createTranslator(language)(isOrganizer ? 'history.organizer' : 'history.participant')));
+      assert.ok(texts(tree).includes(isOnline ? createTranslator(language)('home.online') : 'Real venue'));
+      assert.equal(nodes(tree).find(n => n.type === 'LobbyCategoryPlaceholder').props.category, 'FOOD');
+      assert.equal(nodes(tree).some(n => n.type === 'Pressable' || n.props?.onPress || n.props?.onSelect), false);
+      assert.equal(nodes(tree).some(n => /Chat|LiveLobbyDetails|Countdown|Gauge/.test(String(n.type))), false);
+    }
+    c.unmount();
+  }
+});
+
+test('history invalidation/reload defeats stale GET and page replies and leaves profile data untouched', async () => {
+  const pending = [], c = historyHost({ listLobbyHistory: () => { const p = deferred(); pending.push(p); return p.promise; } });
+  const userBefore = JSON.stringify(c.auth.user); c.render();
+  getLobbyInvalidation(c.auth.lobbyApi).invalidate(); assert.equal(pending.length, 2);
+  pending[1].resolve(page([historyItem('current')], 'more')); await flush();
+  pending[0].resolve(page([historyItem('stale')])); await flush(); assert.deepEqual(c.rows().map(r => r.id), ['current']);
+  byId(c.render(), 'history-more').props.onPress(); getLobbyInvalidation(c.auth.lobbyApi).invalidate();
+  pending[3].resolve(page([historyItem('fresh')])); await flush(); pending[2].resolve(page([historyItem('old-page')])); await flush();
+  assert.deepEqual(c.rows().map(r => r.id), ['fresh']); assert.equal(JSON.stringify(c.auth.user), userBefore);
+  c.render(); c.render(); assert.equal(pending.length, 4); c.unmount(); getLobbyInvalidation(c.auth.lobbyApi).invalidate(); assert.equal(pending.length, 4);
+});
+
+test('history drops pending first/page responses on account, logout, recovery and unmount, including old handlers', async () => {
+  for (const transition of ['account', 'logout', 'recovery', 'unmount']) for (const paginating of [false, true]) for (const fails of [false, true]) {
+    const old = deferred(); let calls = 0;
+    const c = historyHost({ listLobbyHistory: () => { calls++; return calls === 1 && paginating ? Promise.resolve(page([historyItem('a')], 'more')) : calls <= (paginating ? 2 : 1) ? old.promise : Promise.resolve(page([historyItem('b')])); } });
+    c.render(); await flush(); const staleRefresh = byId(c.render(), 'history-refresh').props.onPress;
+    if (paginating) byId(c.render(), 'history-more').props.onPress();
+    if (transition === 'account') c.auth.user = { ...c.auth.user, id: 'B' };
+    else if (transition === 'logout') { c.auth.status = 'unauthenticated'; c.auth.user = null; }
+    else if (transition === 'recovery') c.auth.storageRecoveryRequired = true;
+    else c.unmount();
+    if (transition !== 'unmount') { const firstFrame = c.render(); assert.deepEqual(c.rows(firstFrame), []); }
+    await flush(); const beforeCalls = calls; staleRefresh(); assert.equal(calls, beforeCalls);
+    if (fails) old.reject(Error('old error')); else old.resolve(page([historyItem('old')])); await flush();
+    assert.deepEqual(c.rows().map(r => r.id), transition === 'account' ? ['b'] : []); assert.equal(byId(c.render(), 'history-error'), undefined); c.unmount();
+  }
+});
+
+test('actual Profile tab close/reopen discards late history and account change resets selection without carrying previous rows', async () => {
+  const old = deferred(); let calls = 0; const p = profileHistoryHost({ listLobbyHistory: () => ++calls === 1 ? old.promise : Promise.resolve(page([historyItem('new')])) });
+  byId(p.render().profile, 'profile-tab-lobbies').props.onPress(); p.render();
+  const oldSelect = byId(p.render().profile, 'profile-tab-lobbies').props.onPress;
+  byId(p.render().profile, 'profile-tab-moments').props.onPress(); assert.equal(p.render().history, null);
+  byId(p.render().profile, 'profile-tab-lobbies').props.onPress(); p.render(); await flush();
+  old.resolve(page([historyItem('old')])); await flush(); assert.deepEqual(p.rows(p.render().history).map(r => r.id), ['new']);
+  p.auth.user = { ...p.auth.user, id: 'B' }; assert.equal(p.render().history, null); oldSelect(); assert.equal(p.render().history, null);
+  assert.equal(byId(p.render().profile, 'profile-tab-moments').props.accessibilityState.selected, true); p.unmount();
+});
+
+test('ApiClient history uses existing Bearer transport, encoded cursor and bounded auth retry, never catalog or mocks', async () => {
+  let value = null, reads = 0, refreshes = 0; const seen = [];
+  const reply = (status, value) => new Response(JSON.stringify(value), { status, headers: { 'Content-Type': 'application/json' } });
+  const credentials = { user: { id: 'A' }, accessToken: 'access', refreshToken: 'refresh', tokenType: 'Bearer', accessTokenExpiresIn: 900 };
+  const api = new ApiClient({ baseUrl: () => 'http://api.test/api/v1', refreshTokenStorage: { async get() { return value; }, async set(v) { value = v; }, async clear() { value = null; } }, fetchImpl: async (url, init) => {
+    if (url.endsWith('/auth/login')) return reply(200, credentials);
+    if (url.endsWith('/auth/refresh')) { refreshes++; return reply(200, { ...credentials, accessToken: 'new-access', refreshToken: 'new-refresh' }); }
+    seen.push(url); assert.equal(init.method, 'GET'); assert.equal(init.body, undefined);
+    if (++reads === 1) return reply(401, { error: { code: 'INVALID_ACCESS_TOKEN', message: 'expired' } });
+    assert.equal(init.headers.Authorization, 'Bearer new-access'); return reply(200, page([historyItem()]));
+  } });
+  await api.login({}); assert.equal((await api.listLobbyHistory('opaque+/=')).items[0].id, 'past');
+  assert.deepEqual(seen, ['http://api.test/api/v1/users/me/lobby-history?limit=20&after=opaque%2B%2F%3D', 'http://api.test/api/v1/users/me/lobby-history?limit=20&after=opaque%2B%2F%3D']);
+  assert.equal(refreshes, 1);
+});
 const member = (id = 'A', organizer = false) => ({ user: { id, displayName: `Real <${id}>`, handle: `handle_${id}`, avatar: null }, isOrganizer: organizer, joinedAt: '2026-01-01T00:00:00.000Z' });
 function membersHost(api = {}) {
   const auth = { user: { id: 'A' }, lobbyApi: { listLobbyMembers: async () => page(), ...api } };

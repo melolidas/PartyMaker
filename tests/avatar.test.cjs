@@ -154,6 +154,7 @@ test('actual Profile exposes the separate avatar editor with real identity and k
     '../auth/AuthProvider':{useAuthenticatedAuth:()=>auth},'../components/Primitives':{IconButton:'IconButton'},'../components/Screen':{Screen:'Screen'},
     '../features/profile/ExtroversionGauge':{ExtroversionGauge:'Gauge'},'../features/profile/extroversion':{getExtroversionBand:()=> 'ambivert',getExtroversionVisual:()=>({color:'blue'}),normalizeExtroversionLevel:v=>v},
     '../features/profile/ProfileEditModal':{ProfileEditModal:'ProfileEditModal'},'../features/profile/AvatarImage':{AvatarImage:'AvatarImage'},'../features/profile/AvatarEditor':{AvatarEditor:'AvatarEditor'},
+    '../features/profile/ProfileLobbyHistory':{LobbyHistory:'LobbyHistory'},
     '../features/profile/saveExtroversion':{},'../i18n/LocalizationProvider':{useI18n:()=>({t:createTranslator('ru')})},'../theme':{colors:{},radius:{}},
   });
   const render=()=>h.render(()=>ProfileScreen());

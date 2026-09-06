@@ -17,6 +17,7 @@ import { parseCorsAllowedOrigins } from '../src/config/cors.config';
 import { environmentValidationSchema } from '../src/config/environment.validation';
 import { UsersController } from '../src/users/users.controller';
 import { UsersService } from '../src/users/users.service';
+import { LobbyHistoryService } from '../src/users/lobby-history.service';
 
 const origin = 'http://localhost:8081';
 const secondOrigin = 'https://web.example.test';
@@ -50,6 +51,7 @@ async function createApp(origins: string): Promise<INestApplication> {
         provide: UsersService,
         useValue: { getMe: () => assert.fail('Unauthorized request reached UsersService') },
       },
+      { provide: LobbyHistoryService, useValue: { list: () => assert.fail('Unauthorized request reached LobbyHistoryService') } },
     ],
   }).compile();
   const app = moduleRef.createNestApplication();

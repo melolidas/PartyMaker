@@ -1,6 +1,14 @@
 import { AppLanguage } from './language';
 
 const en = {
+  'history.title': 'Participation history',
+  'history.explanation': 'Lobbies whose scheduled start time has passed, where you remain registered as a participant. This does not confirm attendance or that the event has ended. Read-only; refresh to see changes.',
+  'history.loading': 'Loading participation history…',
+  'history.empty': 'No past lobbies in your participation history yet.',
+  'history.error': 'Could not load participation history. Try again.',
+  'history.pageError': 'Could not load the next page. Previously loaded history is preserved.',
+  'history.organizer': 'Organizer',
+  'history.participant': 'Participant',
   'activity.countLabel': 'Unread notifications:',
   'activity.countLoading': 'Updating unread count.',
   'activity.countError': 'Unread count unavailable. Open Activity and refresh to retry.',
@@ -383,6 +391,14 @@ export type TranslationKey = keyof typeof en;
 export type Translator = (key: TranslationKey) => string;
 
 const ru = {
+  'history.title': 'История участия',
+  'history.explanation': 'Лобби, время начала которых уже наступило и в которых вы остались записаны участником. Это не подтверждает посещение или окончание встречи. Карточки только для просмотра; изменения видны после обновления.',
+  'history.loading': 'Загружаем историю участия…',
+  'history.empty': 'В вашей истории участия пока нет прошлых лобби.',
+  'history.error': 'Не удалось загрузить историю участия. Попробуйте ещё раз.',
+  'history.pageError': 'Не удалось загрузить следующую страницу. Ранее загруженная история сохранена.',
+  'history.organizer': 'Организатор',
+  'history.participant': 'Участник',
   'activity.countLabel': 'Непрочитанных уведомлений:',
   'activity.countLoading': 'Обновление числа непрочитанных.',
   'activity.countError': 'Число непрочитанных недоступно. Откройте Активность и обновите для повтора.',

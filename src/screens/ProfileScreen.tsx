@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Slider from '@react-native-community/slider';
 import { LinearGradient } from 'expo-linear-gradient';
 import { AccessibilityInfo, ActivityIndicator, Alert, Image, Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
@@ -17,6 +17,7 @@ import {
 import { ProfileEditModal } from '../features/profile/ProfileEditModal';
 import { AvatarImage } from '../features/profile/AvatarImage';
 import { AvatarEditor } from '../features/profile/AvatarEditor';
+import { LobbyHistory } from '../features/profile/ProfileLobbyHistory';
 import { saveExtroversionOptimistically } from '../features/profile/saveExtroversion';
 import { useI18n } from '../i18n/LocalizationProvider';
 import { TranslationKey } from '../i18n/translations';
@@ -49,6 +50,12 @@ export function ProfileScreen() {
   const [extroversionErrorKey, setExtroversionErrorKey] = useState<TranslationKey | null>(null);
   const [editingProfile, setEditingProfile] = useState(false);
   const [editingAvatar, setEditingAvatar] = useState(false);
+  const [profileTab, setProfileTab] = useState<{ account: string; value: 'moments' | 'lobbies' }>({ account: user.id, value: 'moments' });
+  const accountRef = useRef(user.id); accountRef.current = user.id;
+  const tab = profileTab.account === user.id ? profileTab.value : 'moments';
+  const selectTab = (value: 'moments' | 'lobbies') => {
+    if (accountRef.current === user.id && !storageRecoveryRequired) setProfileTab({ account: user.id, value });
+  };
   const visibleLevel = editing ? draftLevel : level;
   const visual = getExtroversionVisual(visibleLevel);
   const band = getExtroversionBand(visibleLevel);
@@ -258,29 +265,30 @@ export function ProfileScreen() {
         </View>
       ) : null}
 
+      <View style={styles.tabs}>
+        <Pressable testID="profile-tab-moments" accessibilityRole="tab" accessibilityState={{ selected: tab === 'moments' }} onPress={() => selectTab('moments')} disabled={storageRecoveryRequired} style={[styles.tab, tab === 'moments' && styles.tabActive]}>
+          <Text style={tab === 'moments' ? styles.tabTextActive : styles.tabText}>{t('nav.moments')}</Text>
+        </Pressable>
+        <Pressable testID="profile-tab-lobbies" accessibilityRole="tab" accessibilityState={{ selected: tab === 'lobbies' }} onPress={() => selectTab('lobbies')} disabled={storageRecoveryRequired} style={[styles.tab, tab === 'lobbies' && styles.tabActive]}>
+          <Text style={tab === 'lobbies' ? styles.tabTextActive : styles.tabText}>{t('common.lobbies')}</Text>
+        </Pressable>
+      </View>
+
+      {tab === 'moments' ? <>
       <Text style={styles.location}>{t('lobbies.demoProfile')}</Text>
       <View testID="profile-stats" style={styles.stats}>
         <Stat value="24" label={t('nav.moments')} />
         <Stat value="18" label={t('common.lobbies')} />
         <Stat value="128" label={t('common.likes')} />
       </View>
-
-      <View style={styles.tabs}>
-        <Pressable style={[styles.tab, styles.tabActive]}>
-          <Text style={styles.tabTextActive}>{t('nav.moments')}</Text>
-        </Pressable>
-        <Pressable style={styles.tab}>
-          <Text style={styles.tabText}>{t('common.lobbies')}</Text>
-        </Pressable>
-      </View>
-
-      <View style={styles.gallery}>
+      <View testID="profile-demo-gallery" style={styles.gallery}>
         {gallery.map((image, index) => (
           <View key={index} style={styles.galleryTile}>
             <Image source={image} style={styles.galleryImage} />
           </View>
         ))}
       </View>
+      </> : !storageRecoveryRequired ? <LobbyHistory /> : null}
       </Screen>
       {editingAvatar ? <AvatarEditor key={user.id} onClose={() => setEditingAvatar(false)} /> : null}
       <ProfileEditModal

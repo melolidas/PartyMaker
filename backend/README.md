@@ -325,6 +325,18 @@ Real absent/LEFT → JOINED transitions create the notification under the same L
 
 The frontend uses this total for the Activity navigation badge (1–99/99+, unknown/error distinguished from zero). Refresh points are authenticated startup, Activity opening/Refresh and confirmed read-state changes, not realtime. Cancellation does not increment the organizer's own badge: recipients are other current JOINED participants. No push, polling, additional types beyond the two above or auth lifecycle changes.
 
+## GET /api/v1/users/me/lobby-history
+
+Bearer-only scheduled participation history. The SQL filter requires the current user's JOINED membership, status IN (PUBLISHED, COMPLETED), and startsAt <= one serverNow captured for this request. The organizer has no bypass; the response role compares Lobby.organizerId, not membership.role. Future/CANCELLED/DRAFT/LEFT/REMOVED/non-member records are excluded before pagination. No userId/organizerId/scope override is accepted.
+
+`limit` defaults to 20 (integer 1–50); `after` is an opaque canonical base64url JSON tuple of canonical UTC startsAt (AD years 0001–9999) and UUID id. Missing/empty/malformed tuple data, arrays/objects, invalid dates/UUIDs and unknown query keys return 400 VALIDATION_FAILED. A cursor only positions the page; it never changes time/status/membership filters. One bounded database SELECT with limit+1 provides a consistent statement snapshot, ordered startsAt DESC, id DESC. Separate pages are not frozen: Refresh to see new leading history entries.
+
+200 `{ items, nextCursor }`, each item exactly `{ id, title, description, category, startsAt, timeZone, isOnline, venueName, isOrganizer }`; online venueName is null. No totalCount, full User/Lobby, address, coordinates, participants, messages, media storage paths or auth data. COMPLETED is exposed only through this narrow own-history projection; ordinary details/messages/members access is unchanged.
+
+There is no end time or attendance evidence. Reaching startsAt does not imply physical attendance or event completion. No status mutation, cron, new schema/migration/seed data or background processing. Frontend cards are read-only and update on opening/Refresh, not realtime. PostgreSQL history tests run in the standard npm test and remove only their isolated fixtures.
+
+Verified: full backend typecheck/lint/build and 141 tests, frontend typecheck/366 tests, followed by the real PostgreSQL lost-PATCH-response integration. Six added database tests cover strict validation, startsAt=serverNow, status/membership and canonical role, recipient isolation, bounded stable pagination, safe DTO and unchanged COMPLETED details/chat/roster restrictions. Browser smoke covered tab/Refresh/relogin and two-account isolation using five own fixture lobbies; only their dates/statuses were adjusted, with no system-clock, seed or existing-record changes. Fixtures were cleaned up by confirmed ids. No physical phone was tested.
+
 ## Error response
 
 Every API error is normalized to this shape:

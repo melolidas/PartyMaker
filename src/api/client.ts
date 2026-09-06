@@ -3,7 +3,7 @@ import { getLobbyInvalidation } from './lobbyInvalidation';
 import { isLobbyResponse } from './lobbyResponse';
 import { isNotificationRead, isNotificationUnreadCount, type NotificationPage, type NotificationRead, type NotificationUnreadCount } from './notificationTypes';
 import { getNotificationInvalidation } from './notificationInvalidation';
-import type { UpdateLobbyInput } from './lobbyTypes';
+import type { LobbyHistoryPage, UpdateLobbyInput } from './lobbyTypes';
 import type { CreateLobbyInput, Lobby, LobbyPage, LobbyScope, LobbyMessage, LobbyMessagePage, SendLobbyMessageInput, ChatPage, CancelLobbyResult, LobbyMemberPage } from './lobbyTypes';
 import {
   ApiClientError,
@@ -202,6 +202,11 @@ export class ApiClient {
   listLobbyMembers(id: string, after?: string): Promise<LobbyMemberPage> {
     const query = after === undefined ? '' : `&after=${encodeURIComponent(after)}`;
     return this.protectedRequest<LobbyMemberPage>(`/lobbies/${encodeURIComponent(id)}/members?limit=20${query}`, { method: 'GET' });
+  }
+
+  listLobbyHistory(after?: string): Promise<LobbyHistoryPage> {
+    const query = after === undefined ? '' : `&after=${encodeURIComponent(after)}`;
+    return this.protectedRequest<LobbyHistoryPage>(`/users/me/lobby-history?limit=20${query}`, { method: 'GET' });
   }
 
   sendLobbyMessage(id: string, input: SendLobbyMessageInput): Promise<LobbyMessage> {

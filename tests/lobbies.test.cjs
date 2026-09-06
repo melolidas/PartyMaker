@@ -279,14 +279,133 @@ const notification = (id = 'n1', extra = {}) => ({ id, type: 'LOBBY_JOINED', cre
 const readReceipt = id => ({ id, readAt: '2026-09-06T10:11:12.345Z' });
 function activityHost(api = {}) {
   const auth = { user: { id: 'A' }, lobbyApi: { listNotifications: async () => page([notification()]), readNotification: async id => readReceipt(id), ...api } };
+  let store;
+  const detailHost = host(auth), detailComponents = detailHost.load('src/features/home/LiveLobbyDetails.tsx');
+  const noticeHost = host(auth);
   const h = host(auth), { ActivityScreen } = h.load('src/screens/ActivityScreen.tsx', {
     '../auth/AuthProvider': { useAuth: () => auth }, '../components/Screen': { Screen: 'Screen' },
-    '../features/activity/activity': activityLogic, '../features/home/LiveLobbyDetails': { LiveLobbyDetails: 'LiveLobbyDetails' },
+    '../features/activity/activity': { ...activityLogic, ActivityStore: class extends activityLogic.ActivityStore { constructor(api) { super(api); store = this; } } },
+    '../features/home/LiveLobbyDetails': { LiveLobbyDetails: 'LiveLobbyDetails', CancelledLobbyNotice: detailComponents.CancelledLobbyNotice },
     '../features/profile/AvatarImage': { AvatarImage: 'AvatarImage' }, '../theme': { colors: {} },
     '../i18n/LocalizationProvider': { useI18n: () => ({ t: createTranslator('ru'), language: 'ru' }) },
   });
-  return { h, auth, render: () => h.render(ActivityScreen, {}) };
+  const render = () => h.render(ActivityScreen, {});
+  const details = () => nodes(render()).find(n => n.type === 'LiveLobbyDetails');
+  return { h, auth, render, details, state: () => store.getSnapshot(), detailHost,
+    renderDetails: props => detailHost.render(detailComponents.LiveLobbyDetails, props ?? details().props),
+    notice: () => { const node = nodes(render()).find(n => n.type === detailComponents.CancelledLobbyNotice); return node ? noticeHost.render(node.type, node.props) : null; } };
 }
+
+test('Activity GET/page readAt reconciles lost POST errors in state and render, in either completion order', async () => {
+  for (const kind of ['reload', 'page']) for (const postFirst of [true, false]) {
+    const post = deferred(), read = deferred(); let reads = 0, writes = 0;
+    const c = activityHost({ listNotifications: () => ++reads === 1 ? Promise.resolve(page([notification()], 'p1')) : read.promise,
+      readNotification: () => { writes++; return post.promise; } });
+    c.render(); await flush(); const press = byId(c.render(), 'mark-read-n1').props.onPress; press(); press();
+    assert.equal(writes, 1); assert.ok(byId(c.render(), 'unread-n1'));
+    if (postFirst) {
+      post.reject(Error('saved but receipt lost')); await flush();
+      assert.equal(c.state().readErrors.n1, 'unconfirmed'); assert.ok(byId(c.render(), 'read-error-n1'));
+    }
+    byId(c.render(), kind === 'reload' ? 'activity-refresh' : 'activity-more').props.onPress();
+    read.resolve(page([notification('n1', readReceipt('n1'))], 'p2')); await flush();
+    assert.equal(c.state().items[0].readAt, readReceipt('n1').readAt);
+    assert.equal(c.state().readErrors.n1, undefined); assert.ok(byId(c.render(), 'read-n1'));
+    assert.equal(byId(c.render(), 'read-error-n1'), undefined);
+    if (!postFirst) { post.reject(Error('late POST failure')); await flush(); }
+    assert.equal(c.state().readErrors.n1, undefined); assert.equal(c.state().marking.n1, false);
+    // Replacing the first page and merging an overlapping stale page cannot undo it.
+    c.auth.lobbyApi.listNotifications = async () => page([notification()], 'stale');
+    for (const action of ['activity-refresh', 'activity-more']) {
+      byId(c.render(), action).props.onPress(); await flush();
+      assert.equal(c.state().items[0].readAt, readReceipt('n1').readAt);
+      assert.equal(c.state().readErrors.n1, undefined); assert.ok(byId(c.render(), 'read-n1'));
+      assert.equal(byId(c.render(), 'read-error-n1'), undefined);
+    }
+    assert.equal(writes, 1); c.h.unmount();
+  }
+});
+
+test('Activity unread GET/page does not discharge uncertainty; explicit retry remains locked and access failures stay distinct', async () => {
+  for (const kind of ['reload', 'page']) {
+    let writes = 0; const retry = deferred();
+    const c = activityHost({ listNotifications: async () => page([notification()], 'next'), readNotification: () => ++writes === 1 ? Promise.reject(Error('lost')) : retry.promise });
+    c.render(); await flush(); byId(c.render(), 'mark-read-n1').props.onPress(); await flush();
+    byId(c.render(), kind === 'reload' ? 'activity-refresh' : 'activity-more').props.onPress(); await flush();
+    assert.equal(c.state().readErrors.n1, 'unconfirmed'); assert.ok(byId(c.render(), 'read-error-n1')); assert.ok(byId(c.render(), 'unread-n1')); assert.equal(writes, 1);
+    const press = byId(c.render(), 'mark-read-n1').props.onPress; press(); press(); assert.equal(writes, 2);
+    retry.resolve(readReceipt('n1')); await flush(); assert.equal(c.state().readErrors.n1, undefined); assert.ok(byId(c.render(), 'read-n1')); c.h.unmount();
+  }
+  for (const statusCode of [403, 404]) {
+    const post = deferred(); const c = activityHost({ readNotification: () => post.promise });
+    c.render(); await flush(); byId(c.render(), 'mark-read-n1').props.onPress();
+    c.auth.lobbyApi.listNotifications = async () => page([notification('n1', readReceipt('n1'))]);
+    byId(c.render(), 'activity-refresh').props.onPress(); await flush();
+    post.reject(new ApiClientError({ statusCode, code: 'NOTIFICATION_NOT_FOUND', message: 'Unavailable' })); await flush();
+    assert.equal(c.state().readErrors.n1, 'unavailable'); assert.match(texts(byId(c.render(), 'read-error-n1')), /больше недоступно/); c.h.unmount();
+  }
+});
+
+test('Activity confirmed cancellation uses actual details and notice; close refresh failure cannot erase receipt', async () => {
+  let posts = 0, reads = 0; const pending = deferred();
+  const c = activityHost({ listNotifications: async () => { if (++reads > 1) throw Error('refresh failed'); return page([notification()]); },
+    getLobby: async () => ({ ...lobby, isOrganizer: true, isJoined: true, membershipStatus: 'JOINED' }),
+    cancelLobby: () => { posts++; return pending.promise; } });
+  c.render(); await flush(); byId(c.render(), 'notification-lobby-n1').props.onPress();
+  const props = c.details().props; c.renderDetails(props); await flush();
+  byId(c.renderDetails(props), 'cancel-open').props.onPress(); assert.equal(posts, 0); assert.equal(c.notice(), null);
+  byId(c.renderDetails(props), 'cancel-confirm').props.onPress(); assert.equal(posts, 1); assert.equal(c.notice(), null);
+  pending.resolve(cancelledReceipt()); await flush(); c.renderDetails(props); await flush();
+  assert.equal(c.details(), undefined); assert.ok(byId(c.render(), 'activity-error'));
+  assert.ok(byId(c.notice(), 'cancel-success')); assert.match(texts(c.notice()), /Лобби отменено/);
+  assert.ok(byId(c.render(), 'notification-n1')); assert.equal(reads, 2);
+  button(c.notice(), 'Закрыть').props.onPress(); assert.equal(c.notice(), null); c.detailHost.unmount(); c.h.unmount();
+});
+
+test('Activity ordinary close, denied details and uncertain cancel never produce a success notice', async () => {
+  for (const outcome of ['close', '404', 'network', '5xx', 'invalid']) {
+    let posts = 0; const c = activityHost({ getLobby: async () => {
+      if (outcome === '404' || posts) throw new ApiClientError({ statusCode: 404, code: 'LOBBY_NOT_FOUND', message: 'Missing' });
+      return { ...lobby, isOrganizer: true };
+    }, cancelLobby: async () => {
+      posts++;
+      if (outcome === 'invalid') return { id: 'wrong', status: 'CANCELLED' };
+      throw new ApiClientError({ statusCode: outcome === '5xx' ? 503 : 0, code: 'NETWORK_ERROR', message: 'unconfirmed' });
+    } });
+    c.render(); await flush(); byId(c.render(), 'notification-lobby-n1').props.onPress();
+    const props = c.details().props; c.renderDetails(props); await flush();
+    if (!['close', '404'].includes(outcome)) {
+      byId(c.renderDetails(props), 'cancel-open').props.onPress(); byId(c.renderDetails(props), 'cancel-confirm').props.onPress(); await flush(); c.renderDetails(props);
+      assert.ok(byId(c.renderDetails(props), 'cancel-error'));
+    }
+    assert.equal(c.notice(), null); props.onClose(); await flush(); assert.equal(c.details(), undefined); assert.equal(c.notice(), null);
+    assert.equal(posts, ['close', '404'].includes(outcome) ? 0 : 1); c.detailHost.unmount(); c.h.unmount();
+  }
+});
+
+test('Activity cancellation callbacks belong to one opening/account, receipt dismiss cannot affect a newer receipt', async () => {
+  for (const transition of ['close', 'reopen', 'account', 'logout', 'unmount']) {
+    const c = activityHost(); c.render(); await flush(); byId(c.render(), 'notification-lobby-n1').props.onPress();
+    const old = c.details().props;
+    if (['close', 'reopen'].includes(transition)) { old.onClose(); await flush(); }
+    if (transition === 'reopen') byId(c.render(), 'notification-lobby-n1').props.onPress();
+    if (transition === 'account' || transition === 'logout') { c.auth.user = transition === 'account' ? { id: 'B' } : null; c.render(); await flush(); }
+    if (transition === 'unmount') c.h.unmount();
+    old.onCancelled(); old.onClose(); await flush();
+    assert.equal(c.notice(), null);
+    if (transition === 'reopen') assert.ok(c.details());
+    else if (transition === 'unmount') assert.equal(c.state().account, null); // No tree exists after unmount; harness retains hook slots.
+    else assert.equal(c.details(), undefined);
+    c.h.unmount();
+  }
+  const c = activityHost(); c.render(); await flush();
+  byId(c.render(), 'notification-lobby-n1').props.onPress(); let props = c.details().props;
+  props.onCancelled(); props.onClose(); await flush(); const dismissOld = button(c.notice(), 'Закрыть').props.onPress;
+  byId(c.render(), 'notification-lobby-n1').props.onPress(); props = c.details().props;
+  props.onCancelled(); props.onClose(); await flush(); dismissOld(); assert.ok(c.notice());
+  c.auth.user = { id: 'B' }; c.render(); await flush(); assert.equal(c.notice(), null);
+  c.auth.user = { id: 'A' }; c.render(); await flush(); assert.equal(c.notice(), null); c.h.unmount();
+});
 
 test('Activity loads real rows, empty/error/retry states and gender-neutral text with no demo fallback', async () => {
   const load = deferred(); let requests = 0;

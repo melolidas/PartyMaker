@@ -19,7 +19,16 @@ export class ActivityStore {
   constructor(private readonly api: NotificationsApi) {}
   getSnapshot = () => this.state;
   subscribe = (listener: () => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; };
-  private publish(state: ActivityState) { this.state = state; this.listeners.forEach(listener => listener()); }
+  private publish(state: ActivityState) {
+    // A GET/page readAt confirms current state even if the POST receipt was lost.
+    // Reconcile every publication, including a POST error arriving after that GET.
+    // Access errors remain distinct: a read receipt does not restore access.
+    const readErrors = { ...state.readErrors };
+    for (const id of Object.keys(readErrors)) {
+      if (readErrors[id] === 'unconfirmed' && this.receipts.has(id)) delete readErrors[id];
+    }
+    this.state = { ...state, readErrors }; this.listeners.forEach(listener => listener());
+  }
   setAccount(account: string | null) {
     if (account === this.state.account) return;
     this.context++; this.readGeneration++; this.receipts.clear();

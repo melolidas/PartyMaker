@@ -4,7 +4,7 @@ import { uuid } from 'expo-modules-core';
 import { useAuth } from '../auth/AuthProvider';
 import { Screen } from '../components/Screen';
 import { ActivityStore, emptyActivity } from '../features/activity/activity';
-import { LiveLobbyDetails } from '../features/home/LiveLobbyDetails';
+import { CancelledLobbyNotice, LiveLobbyDetails } from '../features/home/LiveLobbyDetails';
 import { AvatarImage } from '../features/profile/AvatarImage';
 import { useI18n } from '../i18n/LocalizationProvider';
 import { colors } from '../theme';
@@ -16,9 +16,11 @@ export function ActivityScreen() {
   const store = useMemo(() => new ActivityStore(lobbyApi), [lobbyApi]);
   const snapshot = useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot);
   const [selection, setSelection] = useState<{ account: string; id: string } | null>(null);
-  const activeSelection = useRef(selection); activeSelection.current = selection;
+  const activeSelection = useRef<typeof selection>(null);
+  const activeAccount = useRef(account); activeAccount.current = account;
+  const [cancelled, setCancelled] = useState<typeof selection>(null);
   useEffect(() => {
-    setSelection(null); store.setAccount(account);
+    setSelection(null); setCancelled(null); store.setAccount(account);
     return () => { activeSelection.current = null; store.setAccount(null); };
   }, [account, store]);
   const current = snapshot.account === account ? snapshot : emptyActivity(account);
@@ -31,6 +33,9 @@ export function ActivityScreen() {
         <Pressable testID="activity-refresh" accessibilityRole="button" disabled={!account || busy} onPress={() => void store.reload()}><Text style={styles.link}>{t('lobbies.reload')}</Text></Pressable>
       </View>
       <Text style={styles.hint}>{t('activity.history')}</Text>
+      {account && cancelled?.account === account ? <CancelledLobbyNotice onDismiss={() => {
+        setCancelled(current => current === cancelled ? null : current);
+      }} /> : null}
       {current.loading ? <ActivityIndicator testID="activity-loading" color={colors.text} /> : null}
       {current.error ? <View testID="activity-error" style={styles.notice}>
         <Text style={styles.hint}>{t(current.error === 'page' ? 'activity.pageError' : 'activity.error')}</Text>
@@ -51,7 +56,12 @@ export function ActivityScreen() {
               {current.marking[item.id] ? <ActivityIndicator color={colors.text} /> : <Text style={styles.link}>{t(current.readErrors[item.id] ? 'activity.retryRead' : 'activity.markRead')}</Text>}
             </Pressable> : null}
             {item.lobby ? <Pressable testID={`notification-lobby-${item.id}`} accessibilityRole="button" disabled={!account}
-              onPress={() => { if (account && item.lobby) setSelection({ account, id: item.lobby.id }); }}><Text style={styles.link}>{t('activity.openLobby')}</Text></Pressable> : null}
+              onPress={() => {
+                if (account && item.lobby && activeAccount.current === account) {
+                  const opening = { account, id: item.lobby.id };
+                  activeSelection.current = opening; setSelection(opening);
+                }
+              }}><Text style={styles.link}>{t('activity.openLobby')}</Text></Pressable> : null}
           </View>
         </View>
       </View>)}
@@ -60,8 +70,11 @@ export function ActivityScreen() {
       </Pressable> : null}
     </Screen>
     {account && selection?.account === account ? <LiveLobbyDetails key={`${account}:${selection.id}`} id={selection.id} onClose={() => {
-      if (activeSelection.current !== selection) return;
+      if (activeSelection.current !== selection || activeAccount.current !== selection.account) return;
       activeSelection.current = null; setSelection(null); void store.reload();
+    }} onCancelled={() => {
+      if (activeSelection.current !== selection || activeAccount.current !== selection.account) return;
+      setCancelled(selection);
     }} /> : null}
   </>;
 }

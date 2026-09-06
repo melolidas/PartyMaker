@@ -19,6 +19,7 @@ const { LiveLobbyChatStore } = chatLogic;
 const inboxLogic = require('../.expo/lobby-tests/features/chats/liveChatInbox.js');
 const scrollLogic = require('../.expo/lobby-tests/features/chats/liveChatScroll.js');
 const membersLogic = require('../.expo/lobby-tests/features/home/lobbyMembers.js');
+const editLogic = require('../.expo/lobby-tests/features/home/editLobbyForm.js');
 
 const lobby = {
   id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', title: 'demo.pizza', description: 'My own description <not markup>',
@@ -82,6 +83,9 @@ function host(auth) {
       './lobbyDetails': detailsLogic,
       '../chats/LiveLobbyChatScreen': { LiveLobbyChatScreen: 'LiveLobbyChatScreen' },
       './LiveLobbyMembersScreen': { LiveLobbyMembersScreen: 'LiveLobbyMembersScreen' },
+      './EditLobbyScreen': { EditLobbyScreen: 'EditLobbyScreen' },
+      './editLobbyForm': editLogic,
+      './createLobbyForm': createForm,
       './lobbyMembers': membersLogic,
       '../profile/AvatarImage': { AvatarImage: 'AvatarImage' },
       './liveLobbyChat': chatLogic,
@@ -270,6 +274,185 @@ test('members transport uses current Bearer and encoded lobby/cursor with bounde
 const button = (tree, label) => nodes(tree).find(n => n.props?.accessibilityRole === 'button' && texts(n) === label);
 
 const cancelledReceipt = () => ({ id: lobby.id, status: 'CANCELLED' });
+const editableLobby = () => ({ ...lobby, isOrganizer: true, isJoined: true, membershipStatus: 'JOINED', groupExtroversionLevel: 5.5,
+  startsAt: '2200-07-01T12:34:56.789Z', timeZone: 'America/New_York' });
+function editHost(api = {}) {
+  const auth = { user: { id: 'A' }, lobbyApi: { getLobby: async id => ({ ...editableLobby(), id }), updateLobby: async (_id, input) => ({ ...editableLobby(), ...input }), ...api } };
+  let backs = 0, lost = 0, now = Date.now(); const saved = [];
+  const h = host(auth), { EditLobbyScreen } = h.load('src/features/home/EditLobbyScreen.tsx', { './HomeExperienceProvider': { useHomeClock: () => now } });
+  const props = { lobbyId: lobby.id, onBack() { backs++; }, onAccessLost() { lost++; }, onSaved(value) { saved.push(value); } };
+  return { h, auth, props, saved, result: () => ({ backs, lost }), clock(value) { now = value; }, render: () => h.render(EditLobbyScreen, props) };
+}
+
+test('editor loads API values once, fixes original zone/seconds and keeps unsaved draft through background invalidation', async () => {
+  let server = editableLobby(); const c = editHost({ getLobby: async () => server });
+  c.render(); assert.ok(byId(c.render(), 'edit-loading')); await flush();
+  assert.equal(byId(c.render(), 'edit-title').props.value, server.title);
+  assert.match(texts(byId(c.render(), 'edit-schedule')), /America\/New_York/); assert.match(texts(byId(c.render(), 'edit-schedule')), /56/);
+  assert.equal(byId(c.render(), 'create-date'), undefined); assert.equal(byId(c.render(), 'create-time'), undefined);
+  byId(c.render(), 'edit-title').props.onChangeText('Unsaved draft');
+  server = { ...server, title: 'External title', capacity: 9 }; getLobbyInvalidation(c.auth.lobbyApi).invalidate(); await flush();
+  assert.equal(byId(c.render(), 'edit-title').props.value, 'Unsaved draft'); assert.equal(byId(c.render(), 'edit-capacity').props.value, '8');
+  byId(c.render(), 'edit-check').props.onPress(); await flush(); assert.match(texts(byId(c.render(), 'edit-checked')), /External title/);
+  assert.equal(byId(c.render(), 'edit-title').props.value, 'Unsaved draft'); assert.deepEqual(c.saved, []); c.h.unmount();
+});
+
+test('editor normalizes and submits only changed fields, including complete venue pairs; no empty PATCH', async () => {
+  const calls = []; const c = editHost({ updateLobby: async (id, input) => { calls.push({ id, input }); return { ...editableLobby(), ...input }; } });
+  c.render(); await flush(); byId(c.render(), 'edit-submit').props.onPress(); await flush(); assert.equal(calls.length, 0);
+  assert.match(texts(byId(c.render(), 'edit-error')), /Нет изменений/);
+  byId(c.render(), 'edit-title').props.onChangeText('  Changed  '); byId(c.render(), 'edit-online').props.onPress();
+  byId(c.render(), 'edit-capacity').props.onChangeText('3'); byId(c.render(), 'edit-submit').props.onPress(); await flush();
+  assert.deepEqual(calls, [{ id: lobby.id, input: { title: 'Changed', capacity: 3, isOnline: true, venueName: null } }]);
+  assert.equal(c.saved.length, 1); assert.equal(c.saved[0].startsAt, editableLobby().startsAt); assert.equal(c.saved[0].timeZone, 'America/New_York'); c.h.unmount();
+  const base = editableLobby(), fields = { title: base.title, description: base.description, category: base.category, capacity: String(base.capacity), isOnline: false, venueName: ' New cafe ' };
+  assert.deepEqual(editLogic.changedLobbyFields(base, fields), { isOnline: false, venueName: 'New cafe' });
+  assert.deepEqual(editLogic.changedLobbyFields(base, { ...fields, venueName: base.venueName }), {});
+});
+
+test('editor shared field validation rejects invalid text/capacity/venue and keeps inputs', async () => {
+  for (const [field, value, expected] of [['title',' ','create.error.title'], ['description','x'.repeat(201),'create.error.description'],
+    ['capacity','1','create.error.capacity'], ['capacity','2.1','create.error.capacity'], ['venue',' ','create.error.venue']]) {
+    let writes = 0; const c = editHost({ updateLobby: async () => { writes++; return editableLobby(); } }); c.render(); await flush();
+    byId(c.render(), `edit-${field}`).props.onChangeText(value); byId(c.render(), 'edit-submit').props.onPress(); await flush();
+    assert.equal(writes, 0); assert.equal(texts(byId(c.render(), 'edit-error')), createTranslator('ru')(expected));
+    assert.equal(byId(c.render(), `edit-${field}`).props.value, value); c.h.unmount();
+  }
+});
+
+test('editor synchronously locks duplicate submit; unconfirmed save + GET is not success and explicit retry keeps patch', async () => {
+  const pending = deferred(); let writes = 0, server = editableLobby(); const payloads = [];
+  const c = editHost({ getLobby: async () => server, updateLobby: async (_id, patch) => { payloads.push(patch); if (++writes === 1) return pending.promise; return { ...server, ...patch }; } });
+  c.render(); await flush(); byId(c.render(), 'edit-title').props.onChangeText('Draft');
+  const submit = byId(c.render(), 'edit-submit').props.onPress; submit(); submit(); assert.equal(writes, 1);
+  assert.equal(byId(c.render(), 'edit-title').props.editable, false); assert.equal(byId(c.render(), 'edit-check').props.disabled, true);
+  server = { ...server, title: 'Draft' }; pending.reject(Error('lost after commit')); await flush();
+  assert.equal(c.saved.length, 0); assert.match(texts(byId(c.render(), 'edit-error')), /Сохранение не подтверждено/);
+  byId(c.render(), 'edit-check').props.onPress(); await flush();
+  assert.match(texts(byId(c.render(), 'edit-checked')), /не подтверждает/); assert.equal(c.saved.length, 0);
+  assert.equal(byId(c.render(), 'edit-title').props.value, 'Draft'); assert.equal(writes, 1);
+  byId(c.render(), 'edit-submit').props.onPress(); await flush(); assert.equal(c.saved.length, 1);
+  assert.deepEqual(payloads, [{ title: 'Draft' }, { title: 'Draft' }]); c.h.unmount();
+});
+
+test('editor invalid receipts never confirm, business errors preserve draft, GET404 blocks without success or reload loops', async () => {
+  for (const reply of [null, { id: lobby.id }, { ...editableLobby(), id: 'wrong' }, { ...editableLobby(), email: 'private' }, { ...editableLobby(), category: ['FOOD'] }]) {
+    const c = editHost({ updateLobby: async () => reply }); c.render(); await flush(); byId(c.render(), 'edit-title').props.onChangeText('Draft');
+    byId(c.render(), 'edit-submit').props.onPress(); await flush(); assert.equal(c.saved.length, 0); assert.match(texts(byId(c.render(), 'edit-error')), /не подтверждено/); c.h.unmount();
+  }
+  for (const code of ['LOBBY_CAPACITY_BELOW_JOINED', 'LOBBY_CAPACITY_BELOW_MIN_PARTICIPANTS']) {
+    const c = editHost({ updateLobby: async () => { throw new ApiClientError({ statusCode: 409, code, message: code }); } });
+    c.render(); await flush(); byId(c.render(), 'edit-capacity').props.onChangeText('2'); byId(c.render(), 'edit-submit').props.onPress(); await flush();
+    assert.match(texts(byId(c.render(), 'edit-error')), /Вместимость/); assert.equal(byId(c.render(), 'edit-capacity').props.value, '2'); c.h.unmount();
+  }
+  let reads = 0; const c = editHost({ getLobby: async () => { if (++reads > 1) throw new ApiClientError({ statusCode: 404, code: 'LOBBY_NOT_FOUND', message: 'hidden' }); return editableLobby(); }, updateLobby: async () => { throw Error('unconfirmed'); } });
+  c.render(); await flush(); byId(c.render(), 'edit-title').props.onChangeText('Draft'); byId(c.render(), 'edit-submit').props.onPress(); await flush();
+  byId(c.render(), 'edit-check').props.onPress(); await flush();
+  for (let i = 0; i < 3; i++) { c.render(); await flush(); }
+  assert.equal(c.saved.length, 0); assert.equal(c.result().lost, 1); assert.equal(reads, 2);
+  assert.ok(byId(c.render(), 'edit-unavailable')); assert.equal(byId(c.render(), 'edit-submit').props.disabled, true);
+  assert.equal(byId(c.render(), 'edit-title').props.value, 'Draft'); c.h.unmount();
+});
+
+test('invalidation during uncertain PATCH is coalesced into one access check after settlement, preserving draft', async () => {
+  const pending = deferred(); let reads = 0;
+  const c = editHost({ getLobby: async () => {
+    if (++reads > 1) throw new ApiClientError({ statusCode: 404, code: 'LOBBY_NOT_FOUND', message: 'cancelled' });
+    return editableLobby();
+  }, updateLobby: () => pending.promise });
+  c.render(); await flush(); byId(c.render(), 'edit-title').props.onChangeText('Keep this draft'); byId(c.render(), 'edit-submit').props.onPress();
+  for (let i = 0; i < 3; i++) getLobbyInvalidation(c.auth.lobbyApi).invalidate();
+  assert.equal(reads, 1); pending.reject(Error('lost result')); await flush(); c.render();
+  assert.equal(reads, 2); assert.equal(byId(c.render(), 'edit-title').props.value, 'Keep this draft');
+  assert.equal(byId(c.render(), 'edit-submit').props.disabled, true); assert.equal(c.result().lost, 1); assert.equal(c.saved.length, 0);
+  for (let i = 0; i < 3; i++) { c.render(); await flush(); } assert.equal(reads, 2); c.h.unmount();
+});
+
+test('editor late GET/PATCH after close/account/logout/lobby/unmount never updates new draft or calls success', async () => {
+  for (const operation of ['read', 'patch']) for (const transition of ['back','account','logout','lobby','unmount']) {
+    const pending = deferred(); let reads = 0;
+    const c = editHost({ getLobby: async id => operation === 'read' && ++reads === 1 ? pending.promise : { ...editableLobby(), id }, updateLobby: () => pending.promise });
+    c.render(); await flush();
+    if (operation === 'patch') { byId(c.render(), 'edit-title').props.onChangeText('Old draft'); byId(c.render(), 'edit-submit').props.onPress(); }
+    if (transition === 'back') byId(c.render(), 'edit-back').props.onPress();
+    if (transition === 'account') { c.auth.user = { id: 'B' }; c.render(); }
+    if (transition === 'logout') { c.auth.user = null; c.render(); }
+    if (transition === 'lobby') { c.props.lobbyId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'; c.render(); }
+    if (transition === 'unmount') c.h.unmount();
+    pending.resolve({ ...editableLobby(), title: 'Old reply' }); await flush(); assert.equal(c.saved.length, 0);
+    assert.notEqual(byId(c.render(), 'edit-title')?.props.value, 'Old reply'); c.h.unmount();
+  }
+});
+
+test('editor clock blocks open inputs/save at startsAt; initial errors allow retry and never send on Back', async () => {
+  let fail = true, writes = 0; const c = editHost({ getLobby: async () => { if (fail) throw Error('offline'); return editableLobby(); }, updateLobby: async () => { writes++; return editableLobby(); } });
+  c.render(); await flush(); assert.ok(byId(c.render(), 'edit-check-error')); fail = false; byId(c.render(), 'edit-check').props.onPress(); await flush();
+  byId(c.render(), 'edit-title').props.onChangeText('Unsaved'); c.clock(Date.parse(editableLobby().startsAt));
+  assert.equal(byId(c.render(), 'edit-submit').props.disabled, true); assert.equal(byId(c.render(), 'edit-title').props.editable, false);
+  assert.ok(byId(c.render(), 'edit-unavailable')); byId(c.render(), 'edit-back').props.onPress(); assert.equal(c.result().backs, 1); assert.equal(writes, 0); c.h.unmount();
+});
+
+test('actual details edit route uses one Modal, Back cancels, confirmed DTO replaces old GET, and nonorganizer has no action', async () => {
+  const c = cancelHost({ getLobby: async () => editableLobby() }); c.render(); await flush();
+  for (const system of [false, true]) {
+    byId(c.render(), 'edit-open').props.onPress(); const editor = nodes(c.render()).find(n => n.type === 'EditLobbyScreen');
+    assert.equal(editor.props.lobbyId, lobby.id); assert.equal(nodes(c.render()).filter(n => n.type === 'Modal').length, 1);
+    if (system) nodes(c.render()).find(n => n.type === 'Modal').props.onRequestClose(); else editor.props.onBack();
+    await flush(); assert.equal(nodes(c.render()).find(n => n.type === 'EditLobbyScreen'), undefined);
+    editor.props.onSaved({ ...editableLobby(), title: 'Late after Back' });
+    assert.equal(byId(c.render(), 'edit-saved'), undefined); assert.doesNotMatch(texts(c.render()), /Late after Back/);
+  }
+  byId(c.render(), 'edit-open').props.onPress(); const old = deferred(); c.auth.lobbyApi.getLobby = () => old.promise;
+  getLobbyInvalidation(c.auth.lobbyApi).invalidate();
+  nodes(c.render()).find(n => n.type === 'EditLobbyScreen').props.onSaved({ ...editableLobby(), title: 'Updated details' });
+  old.resolve(editableLobby()); await flush(); assert.match(texts(c.render()), /Updated details/); assert.ok(byId(c.render(), 'edit-saved'));
+  assert.ok(byId(c.render(), 'live-chat-open')); assert.ok(byId(c.render(), 'members-open')); assert.ok(byId(c.render(), 'cancel-open')); c.h.unmount();
+  const other = cancelHost({ getLobby: async () => ({ ...editableLobby(), isOrganizer: false }) }); other.render(); await flush(); assert.equal(byId(other.render(), 'edit-open'), undefined); other.h.unmount();
+});
+
+test('PATCH transport uses only explicit auth retry, validates safe DTO and never invalidates another session', async () => {
+  for (const outcome of ['success', 'network', '5xx', 'invalid']) {
+    let writes = 0, refreshes = 0, invalidations = 0; const bodies = [];
+    const client = creationClient(async (url, options) => {
+      if (url.endsWith('/auth/login')) return authReply(1);
+      if (url.endsWith('/auth/refresh')) { refreshes++; return authReply(2); }
+      bodies.push(JSON.parse(options.body)); assert.equal(options.method, 'PATCH');
+      if (++writes === 1) return new Response(JSON.stringify({ error: { code: 'INVALID_ACCESS_TOKEN', message: 'expired' } }), { status: 401 });
+      if (outcome === 'network') throw Error('lost');
+      return new Response(JSON.stringify(outcome === 'invalid' ? { id: lobby.id } : outcome === '5xx' ? { error: { code: 'HTTP_503', message: 'uncertain' } } : { ...editableLobby(), title: 'New' }), { status: outcome === '5xx' ? 503 : 200 });
+    });
+    await client.login({ email: 'a@example.test', password: 'test-only' }); getLobbyInvalidation(client).subscribe(() => invalidations++);
+    if (outcome === 'success') assert.equal((await client.updateLobby(lobby.id, { title: 'New' })).title, 'New');
+    else await assert.rejects(client.updateLobby(lobby.id, { title: 'New' }));
+    assert.equal(writes, 2); assert.equal(refreshes, 1); assert.equal(invalidations, 1); assert.deepEqual(bodies, [{ title: 'New' }, { title: 'New' }]);
+  }
+  const pending = deferred(); let logins = 0, invalidations = 0;
+  const client = creationClient(async url => url.endsWith('/auth/login') ? authReply(++logins, String(logins)) : pending.promise);
+  await client.login({ email: 'a@example.test', password: 'test-only' }); getLobbyInvalidation(client).subscribe(() => invalidations++);
+  const old = client.updateLobby(lobby.id, { title: 'Old account' }); const rejected = assert.rejects(old, error => error.code === 'INVALID_REFRESH_TOKEN');
+  await flush(); await client.login({ email: 'b@example.test', password: 'test-only' }); pending.resolve(new Response(JSON.stringify(editableLobby()))); await rejected; assert.equal(invalidations, 0);
+});
+
+test('confirmed edit refreshes all/mine/full mine/search/inbox and rejects every old page', async () => {
+  let edited = false; const late = deferred();
+  const client = creationClient(async (url, options) => {
+    if (url.endsWith('/auth/login')) return authReply(1);
+    if (options.method === 'PATCH') { edited = true; return new Response(JSON.stringify({ ...editableLobby(), title: 'New title' })); }
+    if (new URL(url).searchParams.has('after')) return late.promise;
+    const row = { ...editableLobby(), title: edited ? 'New title' : 'Old title' };
+    return new Response(JSON.stringify(page(url.includes('/chats') ? [{ ...chatRow(lobby.id), lobby: { id: row.id, title: row.title, category: row.category } }] : edited && new URL(url).searchParams.get('q') ? [] : [row], edited ? null : 'old')));
+  });
+  await client.login({ email: 'a@example.test', password: 'test-only' });
+  const feeds = ['all','mine','mine'].map(scope => new LobbyFeedStore(after => client.listLobbies(after, scope)));
+  const search = new searchLogic.LobbySearchStore((_q, after) => client.listLobbies(after, 'all', 'Old title'));
+  const inbox = new inboxLogic.LiveChatInboxStore(after => client.listChats(after));
+  const stores = [...feeds, search, inbox], channel = getLobbyInvalidation(client);
+  for (const store of stores) { store.setAccount('A'); channel.subscribe(store === inbox ? store.invalidate : store.reload); }
+  await flush(); const oldPages = stores.map(store => store.loadMore()); await client.updateLobby(lobby.id, { title: 'New title' }); await flush();
+  late.resolve(new Response(JSON.stringify(page([editableLobby()])))); await Promise.all(oldPages); await flush();
+  for (const feed of feeds) assert.equal(feed.getSnapshot().items[0].title, 'New title');
+  assert.deepEqual(search.getSnapshot().items, []); assert.equal(inbox.getSnapshot().items[0].lobby.title, 'New title');
+});
 function cancelHost(api = {}, extra = {}) {
   let now = Date.now(), closes = 0, notices = 0;
   const auth = { user: { id: 'A' }, lobbyApi: { getLobby: async () => ({ ...lobby, isOrganizer: true, isJoined: true, membershipStatus: 'JOINED' }), ...api } };

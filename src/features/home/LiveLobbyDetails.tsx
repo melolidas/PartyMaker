@@ -10,6 +10,7 @@ import { LiveLobbyMetadata, LobbyCategoryPlaceholder } from './LiveLobbyCard';
 import { useHomeClock } from './HomeExperienceProvider';
 import { LiveLobbyChatScreen } from '../chats/LiveLobbyChatScreen';
 import { LiveLobbyMembersScreen } from './LiveLobbyMembersScreen';
+import { EditLobbyScreen } from './EditLobbyScreen';
 
 export function LiveLobbyDetails({ id, onClose, onCancelled }: { id: string; onClose: () => void; onCancelled?: () => void }) {
   const { lobbyApi, user, storageRecoveryRequired } = useAuth();
@@ -20,6 +21,11 @@ export function LiveLobbyDetails({ id, onClose, onCancelled }: { id: string; onC
   const chatOpen = !!account && chat?.account === account && chat.id === id;
   const [members, setMembers] = useState<{ account: string; id: string } | null>(null);
   const membersOpen = !!account && members?.account === account && members.id === id;
+  const [edit, setEdit] = useState<{ account: string; id: string } | null>(null);
+  const activeEdit = useRef<typeof edit>(null);
+  const route = useRef({ account, id }); route.current = { account, id };
+  const editOpen = !!account && edit?.account === account && edit.id === id;
+  const [editReceipt, setEditReceipt] = useState<{ account: string; id: string } | null>(null);
   const store = useMemo(() => new LobbyDetailsStore(lobbyApi), [lobbyApi]);
   const snapshot = useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot);
   const notified = useRef(false);
@@ -29,7 +35,10 @@ export function LiveLobbyDetails({ id, onClose, onCancelled }: { id: string; onC
     notified.current = false;
     setChat(null);
     setMembers(null);
-    return () => { unsubscribe(); store.setContext(null, id); };
+    setEdit(null);
+    setEditReceipt(null);
+    activeEdit.current = null;
+    return () => { activeEdit.current = null; unsubscribe(); store.setContext(null, id); };
   }, [store, lobbyApi, account, id]);
   const current = snapshot.account === account && snapshot.id === id ? snapshot : emptyLobbyDetails(account, id);
   useEffect(() => {
@@ -40,16 +49,20 @@ export function LiveLobbyDetails({ id, onClose, onCancelled }: { id: string; onC
   const lobby = current.lobby;
   const intent = lobby ? membershipAction(lobby, now) : null;
   const busy = current.loading || current.mutating;
-  const backToDetails = () => { setChat(null); setMembers(null); void store.reload(); };
-  return <Modal visible transparent animationType="fade" onRequestClose={chatOpen || membersOpen ? backToDetails : onClose}>
+  const backToDetails = () => { activeEdit.current = null; setChat(null); setMembers(null); setEdit(null); void store.reload(); };
+  const currentEdit = () => !!edit && activeEdit.current === edit && route.current.account === account && route.current.id === id;
+  return <Modal visible transparent animationType="fade" onRequestClose={chatOpen || membersOpen || editOpen ? backToDetails : onClose}>
     <View style={styles.overlay}>
-      <View style={[styles.sheet, (chatOpen || membersOpen) && styles.chatSheet]}>
-        {membersOpen ? <LiveLobbyMembersScreen lobbyId={id} onBack={backToDetails} onAccessLost={() => void store.reload()} />
+      <View style={[styles.sheet, (chatOpen || membersOpen || editOpen) && styles.chatSheet]}>
+        {editOpen ? <EditLobbyScreen lobbyId={id} onBack={backToDetails} onAccessLost={() => { if (currentEdit()) void store.reload(); }}
+          onSaved={updated => { if (!currentEdit()) return; activeEdit.current = null; store.acceptEdited(updated); setEdit(null); if (account) setEditReceipt({ account, id }); }} />
+          : membersOpen ? <LiveLobbyMembersScreen lobbyId={id} onBack={backToDetails} onAccessLost={() => void store.reload()} />
           : chatOpen ? <LiveLobbyChatScreen lobbyId={id} title={chat.title} onBack={backToDetails} onAccessLost={() => void store.reload()} /> : <>
         <View style={styles.header}><Text accessibilityRole="header" style={styles.title}>{current.cancelTarget?.title ?? lobby?.title ?? t('lobbies.details')}</Text>
           <Pressable accessibilityRole="button" accessibilityLabel={t('common.close')} onPress={onClose}><Text style={styles.close}>{t('common.close')}</Text></Pressable>
         </View>
         <ScrollView contentContainerStyle={styles.content}>
+          {account && editReceipt?.account === account && editReceipt.id === id ? <Text testID="edit-saved" accessibilityLiveRegion="polite" style={styles.description}>{t('edit.saved')}</Text> : null}
           {current.cancelTarget ? <View testID="cancel-confirmation" style={styles.content}>
             <Text style={styles.description}>{t('cancel.warning')}</Text>
             {current.cancelError ? <Text testID="cancel-error" accessibilityLiveRegion="polite" style={styles.muted}>{t(current.cancelError)}</Text> : null}
@@ -83,6 +96,13 @@ export function LiveLobbyDetails({ id, onClose, onCancelled }: { id: string; onC
               <Text style={styles.close}>{t(current.loading ? 'membership.checking' : 'lobbies.reload')}</Text>
             </Pressable>
             {lobby.isOrganizer ? <>
+              <Pressable testID="edit-open" accessibilityRole="button" disabled={busy || !!current.error || !account || Date.parse(lobby.startsAt) <= now}
+                onPress={account && !busy && !current.error && Date.parse(lobby.startsAt) > now ? () => {
+                  const attempt = { account, id }; activeEdit.current = attempt; setEditReceipt(null); setEdit(attempt);
+                } : undefined} style={styles.action}>
+                <Text style={styles.close}>{t('edit.action')}</Text>
+              </Pressable>
+              {Date.parse(lobby.startsAt) <= now ? <Text style={styles.muted}>{t('edit.unavailable')}</Text> : null}
               <Pressable testID="cancel-open" accessibilityRole="button" disabled={busy || !!current.error || Date.parse(lobby.startsAt) <= now}
                 onPress={store.requestCancel} style={[styles.action, Date.parse(lobby.startsAt) <= now && styles.dimmed]}>
                 <Text style={styles.close}>{t('cancel.action')}</Text>

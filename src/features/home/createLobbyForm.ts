@@ -9,6 +9,7 @@ export type LobbyFormFields = {
   title: string; description: string; category: LobbyCategory; date: string; time: string;
   capacity: string; isOnline: boolean; venueName: string;
 };
+export type LobbyEditableFields = Pick<LobbyFormFields, 'title' | 'description' | 'category' | 'capacity' | 'isOnline' | 'venueName'>;
 export type LobbyFormState = {
   account: string | null; fields: LobbyFormFields; submitting: boolean; error: TranslationKey | null;
 };
@@ -36,18 +37,24 @@ export function bishkekDateTimeToInstant(date: string, time: string): string | n
   return instant.toISOString();
 }
 
-export function validateLobbyForm(fields: LobbyFormFields, now = Date.now()): CreateLobbyInput | TranslationKey {
+export function validateLobbyBasics(fields: LobbyEditableFields): Omit<CreateLobbyInput, 'startsAt' | 'timeZone'> | TranslationKey {
   const title = fields.title.trim(); const description = fields.description.trim();
   if (!title || Array.from(title).length > 40) return 'create.error.title';
   if (!description || Array.from(description).length > 200) return 'create.error.description';
   if (!LOBBY_CATEGORIES.includes(fields.category)) return 'create.error.category';
-  const startsAt = bishkekDateTimeToInstant(fields.date.trim(), fields.time.trim());
-  if (!startsAt || Date.parse(startsAt) <= now) return 'create.error.schedule';
   if (!/^\d+$/.test(fields.capacity.trim()) || Number(fields.capacity) < 2 || Number(fields.capacity) > 2147483647) return 'create.error.capacity';
   const venueName = fields.isOnline ? null : fields.venueName.trim();
   if (venueName !== null && (!venueName || Array.from(venueName).length > 140)) return 'create.error.venue';
-  return { title, description, category: fields.category, startsAt, timeZone: CREATE_LOBBY_TIME_ZONE,
+  return { title, description, category: fields.category,
     capacity: Number(fields.capacity), isOnline: fields.isOnline, venueName };
+}
+
+export function validateLobbyForm(fields: LobbyFormFields, now = Date.now()): CreateLobbyInput | TranslationKey {
+  const basics = validateLobbyBasics(fields);
+  if (typeof basics === 'string') return basics;
+  const startsAt = bishkekDateTimeToInstant(fields.date.trim(), fields.time.trim());
+  if (!startsAt || Date.parse(startsAt) <= now) return 'create.error.schedule';
+  return { ...basics, startsAt, timeZone: CREATE_LOBBY_TIME_ZONE };
 }
 
 /** Screen-local draft + synchronous submit lock. Unmount/account change invalidate all callbacks. */

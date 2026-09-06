@@ -123,7 +123,7 @@ The shared `configureApp` applies the same policy in tests and production bootst
 
 `npm run test:cors` runs the CORS/configuration checks without PostgreSQL or `.env`. The same tests also run in `npm test`, alongside the database-backed Auth/Profile suite.
 
-On web, refresh tokens remain **memory-only**; reloading the page requires explicit sign-in. There is no cookie or localStorage session persistence. Profile changes, newly created lobbies and text messages persist in PostgreSQL. Home and Search load real upcoming lobbies, personal memberships and details with working join/leave. The paper-plane inbox loads available JOINED chats, including past PUBLISHED events. Editing/deleting lobbies, Moments, Activity/Notifications and media APIs other than profile avatars remain unimplemented; existing demo sections stay separate and labeled.
+On web, refresh tokens remain **memory-only**; reloading the page requires explicit sign-in. There is no cookie or localStorage session persistence. Profile changes, newly created lobbies and text messages persist in PostgreSQL. Home and Search load real upcoming lobbies, personal memberships and details with working join/leave. The paper-plane inbox loads available JOINED chats, including past PUBLISHED events. Schedule editing/physical deletion, Moments, Activity/Notifications and media APIs other than profile avatars remain unimplemented; existing demo sections stay separate and labeled.
 
 ## Auth and profile API
 
@@ -235,7 +235,7 @@ Returns **201** with the same safe Lobby DTO. Required JSON fields:
 
 The authenticated user supplies `organizerId` implicitly through the guard. The server sets `status=PUBLISHED` and `minParticipants=2`. Unknown/internal fields (`organizerId`, `status`, `members`, `id`, media, etc.) return `400 VALIDATION_FAILED`, as do invalid inputs. A nested Prisma create atomically inserts the lobby and exactly one organizer membership (`role=ORGANIZER`, `status=JOINED`); a child-insert failure rolls back the lobby. The response immediately reports `joinedCount=1`, `isJoined=true` and the organizer's real group score.
 
-Creation POST has no idempotency key or automatic network retry. A lost response can mean the record was already saved; inspect the catalog or personal list before explicitly resubmitting. The frontend only retries after a definite guard rejection (`401 INVALID_ACCESS_TOKEN`) using its existing refresh mechanism. Home and View all now show real upcoming participation. Organizer cancellation is documented above; completed-event history, editing/deleting, invitations, notifications, organizer transfer and lobby/message media remain out of scope.
+Creation POST has no idempotency key or automatic network retry. A lost response can mean the record was already saved; inspect the catalog or personal list before explicitly resubmitting. The frontend only retries after a definite guard rejection (`401 INVALID_ACCESS_TOKEN`) using its existing refresh mechanism. Home and View all now show real upcoming participation. Organizer cancellation is documented above; completed-event history, schedule editing/physical deletion, invitations, notifications, organizer transfer and lobby/message media remain out of scope.
 
 `npm test` includes database-backed Lobby tests using isolated random-UUID fixtures, cleaned up by their own ids; it never resets or reseeds the database. The seed updates fixed records, so do not rerun it just to refresh Home dates in an existing database. Existing past seed events correctly produce an empty upcoming catalog. For a manual smoke test, create isolated future PUBLISHED fixtures with known ids and clean up only those fixtures; see the root README for list/details/empty/error-retry steps.
 
@@ -296,6 +296,16 @@ Response: `{ items: [{ user: { id, displayName, handle, avatar }, isOrganizer, j
 Limit is 1–50, default 20. `after` is an opaque base64url cursor containing canonical UTC joinedAt and UUID userId. Order: joinedAt ASC, userId ASC. Invalid UUID/limit/cursor and unknown query fields return `400 VALIDATION_FAILED`. Access, lobby/status filtering, ordering and limit+1 pagination run inside one RepeatableRead transaction. No read-side FOR UPDATE and no in-memory whole-roster sorting. A cursor never bypasses membership or lobby filtering.
 
 Each page shares an access/data snapshot, but separate pages are not frozen. External membership/profile changes require Refresh or reopening; an authorized read begun before leave/cancel may finish. Frontend observed 403/404 removes participant data and rechecks details. Existing models, schema and seed are unchanged. The PostgreSQL members e2e suite is included in `npm test` and uses only isolated fixture ids.
+
+## PATCH /api/v1/lobbies/:id
+
+Bearer and Lobby.organizerId ownership are required (membership.role does not grant editing). Only a future PUBLISHED lobby is editable. Send a nonempty partial body with changed `title` (trim, 1–40), `description` (trim, 1–200), existing `category`, integer `capacity` (2–2147483647), or the **complete pair** `isOnline`/`venueName`. Online requires null venue; offline requires a trimmed nonempty name up to 140 characters. Omitted properties are allowed, arbitrary null is not. Empty/invalid bodies, unknown fields and any query fields return `400 VALIDATION_FAILED`.
+
+200 returns the existing safe Lobby DTO. Missing/non-PUBLISHED returns `404 LOBBY_NOT_FOUND`; a different organizer returns `403 LOBBY_ORGANIZER_REQUIRED`; started events return `409 LOBBY_STARTED`. Capacity below actual JOINED returns `409 LOBBY_CAPACITY_BELOW_JOINED`; below persisted minimum returns `409 LOBBY_CAPACITY_BELOW_MIN_PARTICIPANTS`. Effective capacity must be at least max(2, minParticipants, joinedCount); LEFT/REMOVED do not count. No automatic participant removal or minimum reduction.
+
+ReadCommitted plus the shared Lobby FOR UPDATE serializes PATCH with join/leave/cancel/send. Status/organizer/start time and JOINED count are reread after the lock wait; the clock is sampled after acquiring the lock. Only provided fields are written, so independent patches do not overwrite one another. For the same field, last successful commit wins. There is no version/ETag conflict protocol. startsAt (including precision), timeZone, organizer, status, minParticipants, memberships/timestamps and messages remain unchanged except normal Lobby.updatedAt.
+
+No notifications or schedule editing. External edits appear on manual refresh. Network uncertainty is not success: the frontend preserves the draft, permits a manual GET comparison and explicit PATCH retry, with only the existing bounded auth rejection retry. A GET is not a receipt for a particular PATCH. Tests include real overlapping PostgreSQL lock waits, capacity races, cancellation and a controlled clock advancing while a request waits. No schema/migration/seed changes are needed.
 
 ## Error response
 

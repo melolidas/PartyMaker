@@ -69,6 +69,12 @@ export class LobbyDetailsStore {
         lobby: error instanceof ApiClientError && error.statusCode === 404 ? null : this.state.lobby });
     }
   };
+
+  acceptEdited = (lobby: Lobby): void => {
+    if (!this.state.account || this.state.id !== lobby.id || this.state.cancelled) return;
+    this.read++;
+    this.publish({ ...this.state, lobby, loading: false, error: null });
+  };
   changeMembership = async (): Promise<void> => {
     const { account, id, lobby, mutating, loading, error } = this.state;
     if (!account || !lobby || mutating || loading || error || this.state.cancelTarget || this.state.cancelled) return;

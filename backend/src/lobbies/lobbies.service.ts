@@ -8,6 +8,7 @@ import type { CreateLobbyRequestDto } from './dto/create-lobby-request.dto';
 import type { LobbyPageResponseDto, LobbyResponseDto } from './dto/lobby-response.dto';
 import { parseLobbyInstant } from './lobby-instant';
 import type { CancelLobbyResponseDto } from './dto/cancel-lobby-response.dto';
+import type { UpdateLobbyRequestDto } from './dto/update-lobby-request.dto';
 
 const lobbySelect = (userId: string) => ({
   id: true, organizerId: true, title: true, description: true, category: true, startsAt: true,
@@ -193,5 +194,31 @@ export class LobbiesService {
     });
     if (!lobby) throw new NotFoundException({ code: 'LOBBY_NOT_FOUND', message: 'Lobby not found' });
     return toLobbyResponse(lobby, userId);
+  }
+
+  async update(id: string, userId: string, input: UpdateLobbyRequestDto): Promise<LobbyResponseDto> {
+    return this.prisma.$transaction(async tx => {
+      await tx.$queryRaw`SELECT id FROM "Lobby" WHERE id = ${id}::uuid FOR UPDATE`;
+      const lobby = await tx.lobby.findUnique({ where: { id }, select: {
+        status: true, organizerId: true, startsAt: true, minParticipants: true, capacity: true,
+      } });
+      if (!lobby || lobby.status !== 'PUBLISHED') throw new NotFoundException({ code: 'LOBBY_NOT_FOUND', message: 'Lobby not found' });
+      if (lobby.organizerId !== userId) throw new ForbiddenException({ code: 'LOBBY_ORGANIZER_REQUIRED', message: 'Only the organizer can edit this lobby' });
+      // Time is deliberately sampled AFTER waiting for the shared row lock.
+      if (lobby.startsAt.getTime() <= Date.now()) throw new ConflictException({ code: 'LOBBY_STARTED', message: 'A started lobby cannot be edited' });
+      const joinedCount = await tx.lobbyMember.count({ where: { lobbyId: id, status: 'JOINED' } });
+      const capacity = input.capacity ?? lobby.capacity;
+      if (capacity < joinedCount) throw new ConflictException({ code: 'LOBBY_CAPACITY_BELOW_JOINED', message: 'Capacity cannot be smaller than the number of JOINED participants' });
+      if (capacity < lobby.minParticipants) throw new ConflictException({ code: 'LOBBY_CAPACITY_BELOW_MIN_PARTICIPANTS', message: 'Capacity cannot be smaller than minParticipants' });
+      // Do not replay a whole DTO: omitted fields keep the previous committed value.
+      const updated = await tx.lobby.update({ where: { id }, data: {
+        ...(input.title !== undefined ? { title: input.title } : {}),
+        ...(input.description !== undefined ? { description: input.description } : {}),
+        ...(input.category !== undefined ? { category: input.category } : {}),
+        ...(input.capacity !== undefined ? { capacity: input.capacity } : {}),
+        ...(input.isOnline !== undefined ? { isOnline: input.isOnline, venueName: input.venueName } : {}),
+      }, select: lobbySelect(userId) });
+      return toLobbyResponse(updated, userId);
+    }, { isolationLevel: 'ReadCommitted' });
   }
 }

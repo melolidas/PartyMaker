@@ -1,5 +1,7 @@
 import { getApiBaseUrl } from './config';
 import { getLobbyInvalidation } from './lobbyInvalidation';
+import { isLobbyResponse } from './lobbyResponse';
+import type { UpdateLobbyInput } from './lobbyTypes';
 import type { CreateLobbyInput, Lobby, LobbyPage, LobbyScope, LobbyMessage, LobbyMessagePage, SendLobbyMessageInput, ChatPage, CancelLobbyResult, LobbyMemberPage } from './lobbyTypes';
 import {
   ApiClientError,
@@ -237,6 +239,20 @@ export class ApiClient {
     // The shared transport retries only an explicit INVALID_ACCESS_TOKEN rejection,
     // never an ambiguous network/server failure after a potentially committed POST.
     return this.protectedRequest<Lobby>('/lobbies', { method: 'POST', body: input });
+  }
+
+  async updateLobby(id: string, input: UpdateLobbyInput): Promise<Lobby> {
+    const session = this.sessionCoordinator.capturePublishedSession();
+    try {
+      const result = await this.protectedRequestForSession<unknown>(session, `/lobbies/${encodeURIComponent(id)}`, { method: 'PATCH', body: input });
+      if (!isLobbyResponse(result, id) || !result.isOrganizer) {
+        throw new ApiClientError({ code: 'INVALID_API_RESPONSE', statusCode: 0, message: 'Lobby update is unconfirmed' });
+      }
+      return result;
+    } finally {
+      // Refetch after confirmed AND uncertain outcomes, without targeting another session.
+      if (this.sessionCoordinator.isSessionCurrent(session)) getLobbyInvalidation(this).invalidate();
+    }
   }
 
   updateProfile(input: UpdateProfileInput): Promise<UserProfile> {

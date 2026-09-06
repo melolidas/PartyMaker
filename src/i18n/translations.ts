@@ -1,6 +1,20 @@
 import { AppLanguage } from './language';
 
 const en = {
+  'edit.action': 'Edit',
+  'edit.title': 'Edit lobby',
+  'edit.scheduleFixed': 'Schedule (cannot be changed)',
+  'edit.save': 'Save changes',
+  'edit.saved': 'Lobby changes saved.',
+  'edit.noChanges': 'No changes to save.',
+  'edit.unavailable': 'Editing is unavailable: only the organizer can edit a published lobby before it starts.',
+  'edit.capacityJoined': 'Capacity cannot be smaller than the number of current participants. Increase it and try again.',
+  'edit.capacityMinimum': 'Capacity cannot be smaller than this lobby’s minimum participant count.',
+  'edit.validation': 'Check the fields. The server rejected these changes.',
+  'edit.unconfirmed': 'Saving is not confirmed. The request may have succeeded. Check current server data, then deliberately save again if needed.',
+  'edit.check': 'Check current server data',
+  'edit.checkError': 'Could not read current server data. Your draft is preserved; try checking again.',
+  'edit.checked': 'Current server data below. Your draft is unchanged. This check does not confirm the previous save.',
   'members.title': 'Participants',
   'members.joinFirst': 'Only current participants can view this list. Join the lobby first.',
   'members.accessLost': 'The participant list is no longer available. You may have left, or the lobby is unavailable.',
@@ -341,6 +355,20 @@ export type TranslationKey = keyof typeof en;
 export type Translator = (key: TranslationKey) => string;
 
 const ru = {
+  'edit.action': 'Редактировать',
+  'edit.title': 'Редактировать лобби',
+  'edit.scheduleFixed': 'Расписание (изменить нельзя)',
+  'edit.save': 'Сохранить изменения',
+  'edit.saved': 'Изменения лобби сохранены.',
+  'edit.noChanges': 'Нет изменений для сохранения.',
+  'edit.unavailable': 'Редактирование недоступно: изменить опубликованное лобби может только организатор до начала встречи.',
+  'edit.capacityJoined': 'Вместимость не может быть меньше числа текущих участников. Увеличьте её и попробуйте снова.',
+  'edit.capacityMinimum': 'Вместимость не может быть меньше минимального числа участников этого лобби.',
+  'edit.validation': 'Проверьте поля. Сервер отклонил эти изменения.',
+  'edit.unconfirmed': 'Сохранение не подтверждено. Запрос мог выполниться. Проверьте текущие данные сервера и при необходимости осознанно сохраните ещё раз.',
+  'edit.check': 'Проверить данные на сервере',
+  'edit.checkError': 'Не удалось прочитать текущие данные. Черновик сохранён; повторите проверку.',
+  'edit.checked': 'Ниже текущие данные сервера. Черновик не изменён. Эта проверка не подтверждает предыдущее сохранение.',
   'members.title': 'Участники',
   'members.joinFirst': 'Список доступен только текущим участникам. Сначала вступите в лобби.',
   'members.accessLost': 'Список участников больше недоступен. Возможно, вы вышли или лобби стало недоступно.',

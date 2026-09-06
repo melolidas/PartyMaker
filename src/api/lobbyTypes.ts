@@ -23,6 +23,8 @@ export type Lobby = {
 export type LobbyPage = { items: Lobby[]; nextCursor: string | null };
 export type LobbyScope = 'all' | 'mine';
 export type CreateLobbyInput = Pick<Lobby, 'title' | 'description' | 'category' | 'startsAt' | 'timeZone' | 'capacity' | 'isOnline' | 'venueName'>;
+export type UpdateLobbyInput = Partial<Pick<Lobby, 'title' | 'description' | 'category' | 'capacity'>> &
+  ({ isOnline: boolean; venueName: string | null } | { isOnline?: never; venueName?: never });
 export type LobbyMessage = {
   id: string; lobbyId: string; body: string; createdAt: string;
   author: { id: string; displayName: string; handle: string };
@@ -47,6 +49,7 @@ export type LobbyChatApi = {
   sendLobbyMessage: (id: string, input: SendLobbyMessageInput) => Promise<LobbyMessage>;
 };
 export type LobbyApi = LobbyReadApi & LobbyChatApi & {
+  updateLobby: (id: string, input: UpdateLobbyInput) => Promise<Lobby>;
   listLobbyMembers: (id: string, after?: string) => Promise<LobbyMemberPage>;
   cancelLobby: (id: string) => Promise<CancelLobbyResult>;
   listChats: (after?: string) => Promise<ChatPage>;

@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, Get, HttpCode, Inject, Param, ParseUUIDPipe, Post, Query, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, HttpCode, Inject, Param, ParseUUIDPipe, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import { ApiBadRequestResponse, ApiBearerAuth, ApiBody, ApiConflictResponse, ApiCreatedResponse, ApiExtraModels, ApiForbiddenResponse, ApiNotFoundResponse, ApiOkResponse, ApiOperation, ApiTags, ApiUnauthorizedResponse } from '@nestjs/swagger';
 
 import { CurrentAuth } from '../auth/decorators/current-auth.decorator';
@@ -10,6 +10,7 @@ import { CreateLobbyRequestDto } from './dto/create-lobby-request.dto';
 import { LobbyPageResponseDto, LobbyResponseDto } from './dto/lobby-response.dto';
 import { LobbiesService } from './lobbies.service';
 import { CancelLobbyResponseDto } from './dto/cancel-lobby-response.dto';
+import { UpdateLobbyRequestDto } from './dto/update-lobby-request.dto';
 
 @ApiTags('lobbies')
 @ApiBearerAuth('access-token')
@@ -68,6 +69,23 @@ export class LobbiesController {
   @ApiCreatedResponse({ type: LobbyResponseDto })
   create(@Body() input: CreateLobbyRequestDto, @CurrentAuth() auth: AuthContext): Promise<LobbyResponseDto> {
     return this.lobbies.create(input, auth.userId);
+  }
+
+  @Patch(':id')
+  @ApiOperation({ summary: 'Edit basic fields of a future lobby as organizer', description: 'Only changed title/description/category/capacity and paired isOnline/venueName. Empty body and query fields rejected. Schedule, organizer, status and history never change. Serialized with join/leave/cancel/send: independent fields are merged; same field uses last successful commit. No participant notifications.' })
+  @ApiBody({ type: UpdateLobbyRequestDto })
+  @ApiOkResponse({ type: LobbyResponseDto })
+  @ApiForbiddenResponse({ type: ApiErrorResponseDto, description: 'LOBBY_ORGANIZER_REQUIRED' })
+  @ApiNotFoundResponse({ type: ApiErrorResponseDto, description: 'LOBBY_NOT_FOUND: missing or not PUBLISHED' })
+  @ApiConflictResponse({ type: ApiErrorResponseDto, description: 'LOBBY_STARTED, LOBBY_CAPACITY_BELOW_JOINED, LOBBY_CAPACITY_BELOW_MIN_PARTICIPANTS' })
+  update(@Param('id', new ParseUUIDPipe()) id: string, @CurrentAuth() auth: AuthContext,
+    @Body() input: UpdateLobbyRequestDto, @Query() query: Record<string, unknown>): Promise<LobbyResponseDto> {
+    this.assertEmptyBody(query);
+    const fields: (keyof UpdateLobbyRequestDto)[] = ['title', 'description', 'category', 'capacity', 'isOnline', 'venueName'];
+    if (Array.isArray(input) || !fields.some(key => input[key] !== undefined) || input.venueName?.includes('\u0000')) {
+      throw new BadRequestException({ code: 'VALIDATION_FAILED', message: 'A nonempty patch of supported fields is required; NUL is not supported' });
+    }
+    return this.lobbies.update(id, auth.userId, input);
   }
 
   @Get()

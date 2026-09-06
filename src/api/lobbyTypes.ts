@@ -1,4 +1,5 @@
 import type { Avatar } from './types';
+import type { NotificationsApi } from './notificationTypes';
 
 export type LobbyCategory = 'DRINKS' | 'GAMING' | 'FOOD' | 'SPORT' | 'MOVIES' | 'OUTDOORS';
 
@@ -48,7 +49,8 @@ export type LobbyChatApi = {
   listLobbyMessages: (id: string, before?: string) => Promise<LobbyMessagePage>;
   sendLobbyMessage: (id: string, input: SendLobbyMessageInput) => Promise<LobbyMessage>;
 };
-export type LobbyApi = LobbyReadApi & LobbyChatApi & {
+// Lobby-related Activity shares the existing authenticated transport/context.
+export type LobbyApi = LobbyReadApi & LobbyChatApi & NotificationsApi & {
   updateLobby: (id: string, input: UpdateLobbyInput) => Promise<Lobby>;
   listLobbyMembers: (id: string, after?: string) => Promise<LobbyMemberPage>;
   cancelLobby: (id: string) => Promise<CancelLobbyResult>;

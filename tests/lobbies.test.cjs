@@ -20,6 +20,7 @@ const inboxLogic = require('../.expo/lobby-tests/features/chats/liveChatInbox.js
 const scrollLogic = require('../.expo/lobby-tests/features/chats/liveChatScroll.js');
 const membersLogic = require('../.expo/lobby-tests/features/home/lobbyMembers.js');
 const editLogic = require('../.expo/lobby-tests/features/home/editLobbyForm.js');
+const activityLogic = require('../.expo/lobby-tests/features/activity/activity.js');
 
 const lobby = {
   id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', title: 'demo.pizza', description: 'My own description <not markup>',
@@ -272,6 +273,129 @@ test('members transport uses current Bearer and encoded lobby/cursor with bounde
   assert.equal(new Headers(calls[1].options.headers).get('Authorization'), 'Bearer access-2');
 });
 const button = (tree, label) => nodes(tree).find(n => n.props?.accessibilityRole === 'button' && texts(n) === label);
+
+const notification = (id = 'n1', extra = {}) => ({ id, type: 'LOBBY_JOINED', createdAt: '2026-09-01T12:00:00.000Z', readAt: null,
+  actor: { id: 'actor', displayName: 'Настоящее <имя>', handle: 'real_handle', avatar: null }, lobby: { id: lobby.id, title: 'Actual lobby <title>' }, ...extra });
+const readReceipt = id => ({ id, readAt: '2026-09-06T10:11:12.345Z' });
+function activityHost(api = {}) {
+  const auth = { user: { id: 'A' }, lobbyApi: { listNotifications: async () => page([notification()]), readNotification: async id => readReceipt(id), ...api } };
+  const h = host(auth), { ActivityScreen } = h.load('src/screens/ActivityScreen.tsx', {
+    '../auth/AuthProvider': { useAuth: () => auth }, '../components/Screen': { Screen: 'Screen' },
+    '../features/activity/activity': activityLogic, '../features/home/LiveLobbyDetails': { LiveLobbyDetails: 'LiveLobbyDetails' },
+    '../features/profile/AvatarImage': { AvatarImage: 'AvatarImage' }, '../theme': { colors: {} },
+    '../i18n/LocalizationProvider': { useI18n: () => ({ t: createTranslator('ru'), language: 'ru' }) },
+  });
+  return { h, auth, render: () => h.render(ActivityScreen, {}) };
+}
+
+test('Activity loads real rows, empty/error/retry states and gender-neutral text with no demo fallback', async () => {
+  const load = deferred(); let requests = 0;
+  const c = activityHost({ listNotifications: async () => { requests++; return load.promise; } });
+  c.render(); assert.ok(byId(c.render(), 'activity-loading')); assert.equal(requests, 1);
+  load.reject(Error('offline')); await flush(); assert.ok(byId(c.render(), 'activity-error')); assert.equal(byId(c.render(), 'notification-n1'), undefined);
+  c.auth.lobbyApi.listNotifications = async () => page([]); byId(c.render(), 'activity-retry').props.onPress(); await flush();
+  assert.ok(byId(c.render(), 'activity-empty'));
+  c.auth.lobbyApi.listNotifications = async () => page([notification()]); byId(c.render(), 'activity-refresh').props.onPress(); await flush();
+  assert.ok(byId(c.render(), 'notification-n1')); assert.match(texts(c.render()), /Настоящее <имя>/); assert.match(texts(c.render()), /Actual lobby <title>/);
+  assert.match(texts(c.render()), /2026/); assert.match(texts(c.render()), /Вступление в лобби:/);
+  assert.doesNotMatch(texts(c.render()), /Демо|demo\.|присоединился|присоединилась|marina|пригласил/); c.h.unmount();
+});
+
+test('Activity pagination preserves rows/cursor after an error, deduplicates and locks double load', async () => {
+  const calls = [], more = deferred(); let fail = true;
+  const c = activityHost({ listNotifications: async after => { calls.push(after); if (!after) return page([notification()], 'p1'); if (fail) throw Error('page failed'); return more.promise; } });
+  c.render(); await flush(); byId(c.render(), 'activity-more').props.onPress(); await flush();
+  assert.ok(byId(c.render(), 'notification-n1')); assert.ok(byId(c.render(), 'activity-more')); assert.match(texts(byId(c.render(), 'activity-error')), /Предыдущие события сохранены/);
+  fail = false; const retry = byId(c.render(), 'activity-retry').props.onPress; retry(); retry();
+  assert.deepEqual(calls, [undefined, 'p1', 'p1']); assert.equal(byId(c.render(), 'activity-more').props.disabled, true);
+  more.resolve(page([notification(), notification('n2')], null)); await flush();
+  assert.equal(nodes(c.render()).filter(n => n.props?.testID === 'notification-n1').length, 1); assert.ok(byId(c.render(), 'notification-n2'));
+  assert.equal(byId(c.render(), 'activity-more'), undefined); c.h.unmount();
+});
+
+test('Activity confirms read only after valid receipt, locks duplicate action and offers explicit safe retry', async () => {
+  let writes = 0; const pending = deferred();
+  const c = activityHost({ readNotification: async id => { if (++writes === 1) return pending.promise; return readReceipt(id); } });
+  c.render(); await flush(); const press = byId(c.render(), 'mark-read-n1').props.onPress; press(); press();
+  assert.equal(writes, 1); assert.ok(byId(c.render(), 'unread-n1')); assert.equal(byId(c.render(), 'mark-read-n1').props.disabled, true);
+  pending.reject(Error('lost after commit')); await flush(); assert.ok(byId(c.render(), 'unread-n1')); assert.equal(writes, 1);
+  assert.match(texts(byId(c.render(), 'read-error-n1')), /не подтверждена/);
+  byId(c.render(), 'mark-read-n1').props.onPress(); await flush(); assert.equal(writes, 2);
+  assert.equal(byId(c.render(), 'unread-n1'), undefined); assert.ok(byId(c.render(), 'read-n1')); c.h.unmount();
+  for (const receipt of [null, { id: 'n1' }, readReceipt('wrong'), { ...readReceipt('n1'), privateField: 'x' }]) {
+    const bad = activityHost({ readNotification: async () => receipt }); bad.render(); await flush(); byId(bad.render(), 'mark-read-n1').props.onPress(); await flush();
+    assert.ok(byId(bad.render(), 'unread-n1')); assert.ok(byId(bad.render(), 'read-error-n1')); bad.h.unmount();
+  }
+});
+
+test('confirmed read survives an older GET/page and reload does not cancel a pending mark action', async () => {
+  for (const kind of ['reload', 'page']) for (const markFirst of [false, true]) {
+    const old = deferred(), mark = deferred(); let reads = 0;
+    const store = new activityLogic.ActivityStore({ listNotifications: async () => ++reads === 1 ? page([notification()], 'p1') : old.promise,
+      readNotification: () => mark.promise });
+    store.setAccount('A'); await flush();
+    const marking = store.markRead('n1'), reading = kind === 'reload' ? store.reload() : store.loadMore();
+    if (markFirst) { mark.resolve(readReceipt('n1')); await marking; }
+    old.resolve(page([notification()], null)); await reading;
+    if (!markFirst) { mark.resolve(readReceipt('n1')); await marking; }
+    assert.equal(store.getSnapshot().items[0].readAt, readReceipt('n1').readAt);
+    assert.equal(store.getSnapshot().marking.n1, false);
+  }
+});
+
+test('Activity invalidates late reload/page responses and clears data/receipts/actions across account/logout/unmount', async () => {
+  for (const operation of ['reload', 'page', 'mark']) for (const transition of ['account', 'logout', 'unmount']) {
+    const late = deferred(); let reads = 0;
+    const c = activityHost({ listNotifications: async () => ++reads === 1 ? page([notification()], 'p1') : late.promise, readNotification: () => late.promise });
+    c.render(); await flush();
+    byId(c.render(), operation === 'reload' ? 'activity-refresh' : operation === 'page' ? 'activity-more' : 'mark-read-n1').props.onPress();
+    if (transition === 'unmount') c.h.unmount();
+    else { c.auth.user = transition === 'account' ? { id: 'B' } : null; c.auth.lobbyApi.listNotifications = async () => page([]); c.render(); }
+    late.resolve(operation === 'mark' ? readReceipt('n1') : page([notification('old')])); await flush();
+    assert.equal(byId(c.render(), 'notification-old'), undefined); assert.equal(byId(c.render(), 'notification-n1'), undefined); c.h.unmount();
+  }
+  const old = deferred(); let reads = 0;
+  const store = new activityLogic.ActivityStore({ listNotifications: async () => ++reads === 1 ? old.promise : page([notification('new')]), readNotification: async id => readReceipt(id) });
+  store.setAccount('A'); await store.reload(); old.resolve(page([notification('old')])); await flush(); assert.deepEqual(store.getSnapshot().items.map(row => row.id), ['new']);
+});
+
+test('Activity handles deleted actor, hidden lobby and real details/back without marking read or fictitious chat', async () => {
+  let reads = 0, writes = 0;
+  const c = activityHost({ listNotifications: async () => { reads++; return page([notification('hidden', { actor: null, lobby: null }), notification()]); }, readNotification: async id => { writes++; return readReceipt(id); } });
+  c.render(); await flush(); assert.match(texts(c.render()), /Удалённый пользователь/); assert.match(texts(c.render()), /Лобби недоступно/);
+  assert.equal(byId(c.render(), 'notification-lobby-hidden'), undefined);
+  assert.equal(nodes(byId(c.render(), 'notification-hidden')).find(n => n.type === 'AvatarImage').props.avatar, null);
+  byId(c.render(), 'notification-lobby-n1').props.onPress(); const detail = nodes(c.render()).find(n => n.type === 'LiveLobbyDetails');
+  assert.equal(detail.props.id, lobby.id); assert.equal(writes, 0);
+  detail.props.onClose(); await flush(); assert.equal(nodes(c.render()).find(n => n.type === 'LiveLobbyDetails'), undefined); assert.equal(reads, 2);
+  byId(c.render(), 'notification-lobby-n1').props.onPress(); c.render(); detail.props.onClose(); assert.ok(nodes(c.render()).find(n => n.type === 'LiveLobbyDetails'));
+  c.auth.user = { id: 'B' }; c.render(); assert.equal(nodes(c.render()).find(n => n.type === 'LiveLobbyDetails'), undefined); c.h.unmount();
+});
+
+test('unavailable notification action blocks repeats but leaves Activity and its history understandable', async () => {
+  let writes = 0; const c = activityHost({ readNotification: async () => { writes++; throw new ApiClientError({ statusCode: 404, code: 'NOTIFICATION_NOT_FOUND', message: 'Missing' }); } });
+  c.render(); await flush(); byId(c.render(), 'mark-read-n1').props.onPress(); await flush();
+  assert.equal(byId(c.render(), 'mark-read-n1').props.disabled, true); assert.match(texts(byId(c.render(), 'read-error-n1')), /больше недоступно/);
+  byId(c.render(), 'mark-read-n1').props.onPress(); await flush(); assert.equal(writes, 1); c.h.unmount();
+});
+
+test('notifications use the existing Bearer transport: bodyless POST, safe receipt, bounded auth retry, no network retry', async () => {
+  for (const outcome of ['success', 'network', 'invalid']) {
+    let posts = 0, rotations = 0;
+    const client = creationClient(async (url, options) => {
+      if (url.endsWith('/auth/login')) return authReply(1);
+      if (url.endsWith('/auth/refresh')) { rotations++; return authReply(2); }
+      if (options.method === 'GET') { const q = new URL(url).searchParams; assert.equal(q.get('limit'), '20'); assert.equal(q.get('after'), 'a/b+'); return new Response(JSON.stringify(page([notification()]))); }
+      assert.equal(new URL(url).pathname, '/api/v1/notifications/n1/read'); assert.equal(options.method, 'POST'); assert.equal(options.body, undefined);
+      if (++posts === 1) return new Response(JSON.stringify({ error: { code: 'INVALID_ACCESS_TOKEN', message: 'expired' } }), { status: 401 });
+      assert.equal(new Headers(options.headers).get('Authorization'), 'Bearer access-2');
+      if (outcome === 'network') throw Error('lost'); return new Response(JSON.stringify(outcome === 'invalid' ? readReceipt('wrong') : readReceipt('n1')));
+    });
+    await client.login({ email: 'test@example.test', password: 'test-only' }); await client.listNotifications('a/b+');
+    if (outcome === 'success') assert.deepEqual(await client.readNotification('n1'), readReceipt('n1')); else await assert.rejects(client.readNotification('n1'));
+    assert.equal(posts, 2); assert.equal(rotations, 1);
+  }
+});
 
 const cancelledReceipt = () => ({ id: lobby.id, status: 'CANCELLED' });
 const editableLobby = () => ({ ...lobby, isOrganizer: true, isJoined: true, membershipStatus: 'JOINED', groupExtroversionLevel: 5.5,

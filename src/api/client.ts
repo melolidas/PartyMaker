@@ -1,6 +1,7 @@
 import { getApiBaseUrl } from './config';
 import { getLobbyInvalidation } from './lobbyInvalidation';
 import { isLobbyResponse } from './lobbyResponse';
+import { isNotificationRead, type NotificationPage, type NotificationRead } from './notificationTypes';
 import type { UpdateLobbyInput } from './lobbyTypes';
 import type { CreateLobbyInput, Lobby, LobbyPage, LobbyScope, LobbyMessage, LobbyMessagePage, SendLobbyMessageInput, ChatPage, CancelLobbyResult, LobbyMemberPage } from './lobbyTypes';
 import {
@@ -260,6 +261,17 @@ export class ApiClient {
       method: 'PATCH',
       body: input,
     });
+  }
+
+  listNotifications(after?: string): Promise<NotificationPage> {
+    const query = new URLSearchParams({ limit: '20', ...(after ? { after } : {}) });
+    return this.protectedRequest<NotificationPage>(`/notifications?${query}`, { method: 'GET' });
+  }
+
+  async readNotification(id: string): Promise<NotificationRead> {
+    const result = await this.protectedRequest<unknown>(`/notifications/${encodeURIComponent(id)}/read`, { method: 'POST' });
+    if (!isNotificationRead(result, id)) throw new ApiClientError({ code: 'INVALID_API_RESPONSE', statusCode: 0, message: 'Notification read is unconfirmed' });
+    return result;
   }
 
   getAvatarUrl(id: string): string {

@@ -1,172 +1,76 @@
-import { Image, StyleSheet, Text, View } from 'react-native';
-import { Feather } from '@expo/vector-icons';
-import { photos } from '../assets';
-import { Avatar } from '../components/Primitives';
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
+import { uuid } from 'expo-modules-core';
+import { useAuth } from '../auth/AuthProvider';
 import { Screen } from '../components/Screen';
+import { ActivityStore, emptyActivity } from '../features/activity/activity';
+import { LiveLobbyDetails } from '../features/home/LiveLobbyDetails';
+import { AvatarImage } from '../features/profile/AvatarImage';
 import { useI18n } from '../i18n/LocalizationProvider';
-import { TranslationKey } from '../i18n/translations';
 import { colors } from '../theme';
 
-type Notification = {
-  user: string;
-  text: TranslationKey;
-  context: TranslationKey;
-  time: TranslationKey;
-  image?: keyof typeof photos;
-  dot?: boolean;
-};
-
-const groups: { title: TranslationKey; items: Notification[] }[] = [
-  {
-    title: 'activity.new',
-    items: [
-      { user: 'alex', text: 'activity.joinedMale', context: 'demo.beer', time: 'time.2m', dot: true },
-      {
-        user: 'marina',
-        text: 'activity.commentedFemale',
-        context: 'demo.pizza',
-        time: 'time.15m',
-        image: 'party',
-      },
-      { user: 'dan', text: 'activity.likedMale', context: 'demo.pizza', time: 'time.23m', image: 'party' },
-      { user: 'john', text: 'activity.invited', context: 'demo.cs2', time: 'time.35m', image: 'cinema' },
-    ],
-  },
-  {
-    title: 'common.today',
-    items: [
-      { user: 'kate', text: 'activity.joinedFemale', context: 'demo.basketball', time: 'time.1h' },
-      {
-        user: 'tim',
-        text: 'activity.commentedMale',
-        context: 'demo.hikingMountains',
-        time: 'time.2h',
-        image: 'hiking',
-      },
-      { user: 'anna', text: 'activity.likedFemale', context: 'demo.hikingMountains', time: 'time.3h', image: 'hiking' },
-    ],
-  },
-  {
-    title: 'common.yesterday',
-    items: [
-      { user: 'max', text: 'activity.joinedMale', context: 'demo.cinema', time: 'common.yesterday' },
-    ],
-  },
-];
-
 export function ActivityScreen() {
-  const { t } = useI18n();
-  return (
+  const { t, language } = useI18n();
+  const { lobbyApi, user, storageRecoveryRequired } = useAuth();
+  const account = storageRecoveryRequired ? null : user?.id ?? null;
+  const store = useMemo(() => new ActivityStore(lobbyApi), [lobbyApi]);
+  const snapshot = useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot);
+  const [selection, setSelection] = useState<{ account: string; id: string } | null>(null);
+  const activeSelection = useRef(selection); activeSelection.current = selection;
+  useEffect(() => {
+    setSelection(null); store.setAccount(account);
+    return () => { activeSelection.current = null; store.setAccount(null); };
+  }, [account, store]);
+  const current = snapshot.account === account ? snapshot : emptyActivity(account);
+  const busy = current.loading || current.loadingMore;
+  const imageAttempt = useMemo(() => uuid.v4(), [account, current.imageRevision]);
+  return <>
     <Screen>
-      <Text style={styles.title}>{t('nav.activity')} · {t('lobbies.demo')}</Text>
-      {groups.map((group) => (
-        <View key={group.title} style={styles.group}>
-          <Text style={styles.groupTitle}>{t(group.title)}</Text>
-          <View style={styles.groupLine} />
-          {group.items.map((item) => (
-            <NotificationRow key={`${item.user}-${item.time}`} item={item} />
-          ))}
+      <View style={styles.header}>
+        <Text accessibilityRole="header" style={styles.title}>{t('nav.activity')}</Text>
+        <Pressable testID="activity-refresh" accessibilityRole="button" disabled={!account || busy} onPress={() => void store.reload()}><Text style={styles.link}>{t('lobbies.reload')}</Text></Pressable>
+      </View>
+      <Text style={styles.hint}>{t('activity.history')}</Text>
+      {current.loading ? <ActivityIndicator testID="activity-loading" color={colors.text} /> : null}
+      {current.error ? <View testID="activity-error" style={styles.notice}>
+        <Text style={styles.hint}>{t(current.error === 'page' ? 'activity.pageError' : 'activity.error')}</Text>
+        <Pressable testID="activity-retry" accessibilityRole="button" disabled={!account || busy} onPress={() => void (current.error === 'page' ? store.loadMore() : store.reload())}><Text style={styles.link}>{t('auth.retry')}</Text></Pressable>
+      </View> : null}
+      {account && !current.loading && !current.error && !current.items.length ? <Text testID="activity-empty" style={styles.notice}>{t('activity.empty')}</Text> : null}
+      {current.items.map(item => <View testID={`notification-${item.id}`} key={item.id} style={styles.row}>
+        <AvatarImage avatar={item.actor?.avatar ?? null} size={43} reloadKey={imageAttempt} />
+        <View style={styles.body}>
+          <Text style={styles.message}>{t('activity.joinEvent')} <Text style={styles.user}>{item.actor?.displayName ?? t('activity.unknownActor')}</Text></Text>
+          {item.actor ? <Text style={styles.hint}>@{item.actor.handle}</Text> : null}
+          <Text style={styles.message}>{item.lobby?.title ?? t('activity.unavailableLobby')}</Text>
+          <Text style={styles.hint}>{new Date(item.createdAt).toLocaleString(language === 'ru' ? 'ru-RU' : 'en-US', { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</Text>
+          {!item.readAt ? <Text testID={`unread-${item.id}`} style={styles.unread}>{t('activity.unread')}</Text> : <Text testID={`read-${item.id}`} style={styles.hint}>{t('activity.read')}</Text>}
+          {current.readErrors[item.id] ? <Text testID={`read-error-${item.id}`} accessibilityLiveRegion="polite" style={styles.hint}>{t(current.readErrors[item.id] === 'unavailable' ? 'activity.unavailableNotification' : 'activity.readUnconfirmed')}</Text> : null}
+          <View style={styles.actions}>
+            {!item.readAt ? <Pressable testID={`mark-read-${item.id}`} accessibilityRole="button" disabled={!account || !!current.marking[item.id] || current.readErrors[item.id] === 'unavailable'} onPress={() => void store.markRead(item.id)}>
+              {current.marking[item.id] ? <ActivityIndicator color={colors.text} /> : <Text style={styles.link}>{t(current.readErrors[item.id] ? 'activity.retryRead' : 'activity.markRead')}</Text>}
+            </Pressable> : null}
+            {item.lobby ? <Pressable testID={`notification-lobby-${item.id}`} accessibilityRole="button" disabled={!account}
+              onPress={() => { if (account && item.lobby) setSelection({ account, id: item.lobby.id }); }}><Text style={styles.link}>{t('activity.openLobby')}</Text></Pressable> : null}
+          </View>
         </View>
-      ))}
+      </View>)}
+      {current.nextCursor ? <Pressable testID="activity-more" accessibilityRole="button" disabled={!account || busy} onPress={() => void store.loadMore()}>
+        {current.loadingMore ? <ActivityIndicator color={colors.text} /> : <Text style={styles.link}>{t('lobbies.loadMore')}</Text>}
+      </Pressable> : null}
     </Screen>
-  );
+    {account && selection?.account === account ? <LiveLobbyDetails key={`${account}:${selection.id}`} id={selection.id} onClose={() => {
+      if (activeSelection.current !== selection) return;
+      activeSelection.current = null; setSelection(null); void store.reload();
+    }} /> : null}
+  </>;
 }
-
-function NotificationRow({ item }: { item: Notification }) {
-  const { t } = useI18n();
-  return (
-    <View style={styles.row}>
-      <View>
-        <Avatar label={item.user.slice(0, 1).toUpperCase()} size={43} />
-        {item.dot ? <View style={styles.onlineDot} /> : null}
-      </View>
-      <View style={styles.rowBody}>
-        <Text style={styles.message}>
-          <Text style={styles.user}>{item.user}</Text> {t(item.text)}
-        </Text>
-        <View style={styles.contextRow}>
-          <Text style={styles.context}>{t(item.context)}</Text>
-          <Text style={styles.time}>{t(item.time)}</Text>
-        </View>
-      </View>
-      {item.image ? (
-        <Image source={photos[item.image]} style={styles.preview} />
-      ) : (
-        <Feather name="more-vertical" size={18} color={colors.muted} />
-      )}
-    </View>
-  );
-}
-
 const styles = StyleSheet.create({
-  title: {
-    color: colors.text,
-    fontSize: 26,
-    fontWeight: '800',
-    letterSpacing: -0.6,
-    marginBottom: 16,
-  },
-  group: {
-    marginBottom: 20,
-  },
-  groupTitle: {
-    color: colors.text,
-    fontSize: 13,
-    fontWeight: '600',
-    marginBottom: 10,
-  },
-  groupLine: {
-    height: StyleSheet.hairlineWidth,
-    backgroundColor: colors.border,
-  },
-  row: {
-    minHeight: 76,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: colors.border,
-  },
-  onlineDot: {
-    position: 'absolute',
-    width: 8,
-    height: 8,
-    right: 0,
-    bottom: 1,
-    borderRadius: 4,
-    backgroundColor: colors.text,
-    borderWidth: 2,
-    borderColor: colors.background,
-  },
-  rowBody: {
-    flex: 1,
-    paddingVertical: 10,
-    gap: 5,
-  },
-  message: {
-    color: colors.text,
-    fontSize: 13,
-    lineHeight: 18,
-  },
-  user: {
-    fontWeight: '800',
-  },
-  contextRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-  },
-  context: {
-    color: colors.text,
-    fontSize: 11,
-  },
-  time: {
-    color: colors.muted,
-    fontSize: 11,
-  },
-  preview: {
-    width: 43,
-    height: 43,
-    borderRadius: 8,
-  },
+  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
+  title: { color: colors.text, fontSize: 26, fontWeight: '800', letterSpacing: -0.6 },
+  hint: { color: colors.muted, fontSize: 12, lineHeight: 18 }, notice: { color: colors.muted, paddingVertical: 18 },
+  link: { color: colors.text, paddingVertical: 10, fontSize: 12 },
+  row: { flexDirection: 'row', alignItems: 'flex-start', gap: 12, paddingVertical: 16, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border },
+  body: { flex: 1, gap: 5 }, message: { color: colors.text, fontSize: 13, lineHeight: 18 }, user: { fontWeight: '800' },
+  unread: { color: colors.text, fontSize: 12, fontWeight: '700' }, actions: { flexDirection: 'row', flexWrap: 'wrap', gap: 20 },
 });

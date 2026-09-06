@@ -158,6 +158,11 @@ export class LobbiesService {
         } else {
           await tx.lobbyMember.create({ data: { lobbyId: id, userId, role: 'MEMBER', status: 'JOINED', joinedAt: now } });
         }
+        // A real join/rejoin is one event. The notification and membership commit
+        // together under the parent lock; no-op joins returned before this point.
+        if (userId !== lobby.organizerId) await tx.notification.create({ data: {
+          recipientId: lobby.organizerId, actorId: userId, lobbyId: id, type: 'LOBBY_JOINED',
+        } });
       } else {
         await tx.lobbyMember.update({ where: key, data: { status: 'LEFT', leftAt: now } });
       }

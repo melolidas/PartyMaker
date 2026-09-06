@@ -1,6 +1,20 @@
 import { AppLanguage } from './language';
 
 const en = {
+  'activity.history': 'Lobby join events. Refresh to see new activity; membership may have changed since.',
+  'activity.joinEvent': 'Lobby join:',
+  'activity.unknownActor': 'Deleted user',
+  'activity.unavailableLobby': 'Lobby unavailable',
+  'activity.unavailableNotification': 'This notification is no longer available. Refresh the list.',
+  'activity.empty': 'No join notifications yet. New participants in your lobbies will appear here.',
+  'activity.error': 'Could not load activity. Try again.',
+  'activity.pageError': 'Could not load the next page. Previous activity is preserved.',
+  'activity.unread': '● Unread',
+  'activity.read': 'Read',
+  'activity.markRead': 'Mark as read',
+  'activity.retryRead': 'Retry marking as read',
+  'activity.readUnconfirmed': 'Marking as read is not confirmed. You can safely retry.',
+  'activity.openLobby': 'Open lobby',
   'edit.action': 'Edit',
   'edit.title': 'Edit lobby',
   'edit.scheduleFixed': 'Schedule (cannot be changed)',
@@ -356,6 +370,20 @@ export type TranslationKey = keyof typeof en;
 export type Translator = (key: TranslationKey) => string;
 
 const ru = {
+  'activity.history': 'События вступления в лобби. Новые появляются после обновления; участие с тех пор могло измениться.',
+  'activity.joinEvent': 'Вступление в лобби:',
+  'activity.unknownActor': 'Удалённый пользователь',
+  'activity.unavailableLobby': 'Лобби недоступно',
+  'activity.unavailableNotification': 'Уведомление больше недоступно. Обновите список.',
+  'activity.empty': 'Уведомлений о вступлении пока нет. Здесь появятся новые участники ваших лобби.',
+  'activity.error': 'Не удалось загрузить активность. Попробуйте снова.',
+  'activity.pageError': 'Не удалось загрузить следующую страницу. Предыдущие события сохранены.',
+  'activity.unread': '● Не прочитано',
+  'activity.read': 'Прочитано',
+  'activity.markRead': 'Отметить прочитанным',
+  'activity.retryRead': 'Повторить отметку прочтения',
+  'activity.readUnconfirmed': 'Отметка прочтения не подтверждена. Можно безопасно повторить.',
+  'activity.openLobby': 'Открыть лобби',
   'edit.action': 'Редактировать',
   'edit.title': 'Редактировать лобби',
   'edit.scheduleFixed': 'Расписание (изменить нельзя)',

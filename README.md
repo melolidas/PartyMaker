@@ -60,7 +60,7 @@ If reconciliation temporarily fails, use **Retry recovery / Повторить �
 
 **Restart limitation:** a timeout is an in-memory safety boundary, not proof of durable invalidation. Pending/unknown persistent records are not restored, and a new runtime never clears them merely because its WeakMap is empty. However, if a delayed `committed` write physically completes while revocation/tombstone writes are unavailable, a new runtime can observe matching committed credentials. Without confirmed durable cleanup (or confirmed server revocation), absence of session restoration after restart cannot be guaranteed. The regression suite explicitly covers this limit. If the process dies with an unresolved pending writer and no terminal proof, recovery cannot safely unlock it automatically. No extra markers are added to claim a stronger guarantee.
 
-Profile name, bio, city, country code, extroversion level and avatar are backed by the API. Home's upcoming catalog, Your lobbies / View all, Search, lobby details, Create Lobby, the paper-plane chat inbox and lobby text chat use PostgreSQL through the same authenticated ApiClient. Gallery, stats, Moments and Activity remain demos. Real joining/leaving and organizer cancellation work, including from search results. Basic organizer editing is available for future lobbies. Invitations, notifications, organizer transfer, schedule editing, physical deletion and media other than profile avatars are not implemented.
+Profile name, bio, city, country code, extroversion level and avatar are backed by the API. Home's upcoming catalog, Your lobbies / View all, Search, lobby details, Create Lobby, the paper-plane chat inbox and lobby text chat use PostgreSQL through the same authenticated ApiClient. Gallery, stats and Moments remain demos; Activity now shows real LOBBY_JOINED notifications. Real joining/leaving and organizer cancellation work, including from search results. Basic organizer editing is available for future lobbies. Invitations, push/other notification types, organizer transfer, schedule editing, physical deletion and media other than profile avatars are not implemented.
 
 ### Profile avatars: limited local Media slice
 
@@ -111,7 +111,7 @@ Backend CORS defaults to no cross-origin permission. `CORS_ALLOWED_ORIGINS` acce
 - Real chat inbox including already-started PUBLISHED events, ordered by latest message activity
 - Moments social feed
 - Create Lobby: real form and atomic PostgreSQL creation with organizer membership
-- Activity notifications
+- Activity: real organizer join notifications, individual read action, manual refresh
 - Profile with real editable avatar and a separately labeled demo photo gallery
 
 ## Languages
@@ -183,7 +183,7 @@ Only the cancel endpoint's matching id/status confirms success. Then a localized
 
 Network/5xx/invalid responses are **unconfirmed**, not success. The open UI retains the target account/id/title independently of its loaded Lobby DTO and offers **Retry cancellation / Повторить отмену** with the same POST. An optional GET 404 or disappearance from lists is **not proof**. Retry remains available even after startsAt or while a verification GET is pending: the server distinguishes an already-CANCELLED no-op from a still-PUBLISHED started event. No automatic network retry is added; existing bounded auth-refresh retry remains. The pending target is memory-only and is discarded on close/unmount, lobby change, logout or account switch; late results cannot confirm/close another context.
 
-Browser regression (Expo Web + PostgreSQL): two isolated users create/join and exchange messages, organizer declines confirmation, then cancels; both users' refreshed lists/inbox exclude the event and the participant's open chat becomes unavailable. Verify history in the database before cleaning only those known fixture ids. Also exercise a committed cancellation whose successful response is replaced with a test 503: GET 404 must leave the retry UI open, and only a repeated POST 200 shows success without changing updatedAt. This browser check does not imply a physical-phone/native check. Restoration, organizer transfer, schedule editing, archives, notifications and lobby/message media remain out of scope.
+Browser regression (Expo Web + PostgreSQL): two isolated users create/join and exchange messages, organizer declines confirmation, then cancels; both users' refreshed lists/inbox exclude the event and the participant's open chat becomes unavailable. Verify history in the database before cleaning only those known fixture ids. Also exercise a committed cancellation whose successful response is replaced with a test 503: GET 404 must leave the retry UI open, and only a repeated POST 200 shows success without changing updatedAt. This browser check does not imply a physical-phone/native check. Restoration, organizer transfer, schedule editing, archives, cancellation notifications and lobby/message media remain out of scope.
 
 ## Remaining demo fixtures
 
@@ -233,7 +233,7 @@ Pages are **not a frozen snapshot**: a new message can move a chat above a curso
 
 Browser smoke: create an isolated event → second user joins → both open it through the paper-plane inbox and exchange messages → Back/Refresh updates preview and order → leaving a future event removes it from that user's inbox. Separately use a past PUBLISHED fixture with 75 messages: verify JOINED access, initial latest position, older-page anchor, Refresh while reading history, and own-send visibility. Tests/fixtures are isolated and removed only by known ids. Physical-phone scrolling/gestures require a separate device check.
 
-Legacy `ChatsModal`, `ChatsScreen`, `LobbyChatScreen` and `MockChatProvider` remain for existing demo fixtures/tests and are not fed real ids. Their local composer and sample data are not delivery, backend messages or a fallback for this inbox. Moments, Activity, gallery and profile statistics remain demo-only. Chat search, archives, unread/read receipts and notifications are not implemented.
+Legacy `ChatsModal`, `ChatsScreen`, `LobbyChatScreen` and `MockChatProvider` remain for existing demo fixtures/tests and are not fed real ids. Their local composer and sample data are not delivery, backend messages or a fallback for this inbox. Moments, gallery and profile statistics remain demo-only. Chat search, archives, chat unread/read receipts and chat notifications are not implemented.
 
 ### Back navigation and native gestures
 
@@ -270,6 +270,16 @@ The editor keeps the original snapshot, the current draft, and a memory-only set
 `npm run test:lobby-edit:integration` (from the repository root, with backend dependencies and the existing PostgreSQL running) compiles the frontend tests/backend and runs the real store + ApiClient against the normal Nest app on a temporary loopback port. It uses the unchanged `backend/.env`, drops only the test client's successful PATCH response **after verifying the commit in PostgreSQL**, then checks edited retries, unrelated changes, exact schedule, membership/messages and the delayed success receipt. It removes only its own returned fixture IDs; no reset, reseed, substitute DB or interruption of shared services. The regular frontend `npm test` also covers no-commit failures, GET failures, venue-pair reversions, rejections and late responses without requiring PostgreSQL.
 
 Capacity cannot fall below JOINED count or persisted minParticipants. The organizer counts as joined; LEFT/REMOVED do not. Database writes share Lobby FOR UPDATE with membership/cancel/send, so independent changed fields merge; for the same field the last successful commit wins. Schedule changes, transfer, physical deletion, photos and participant notifications are not included. Other users see edits after Refresh/reopening, not realtime. Physical-phone behavior requires a separate device check.
+
+## Activity: organizer join notifications
+
+Activity loads the authenticated user's real `LOBBY_JOINED` notifications on tab opening and manual Refresh. New absent/LEFT → JOINED participation creates an event for Lobby.organizerId in the SAME PostgreSQL transaction/parent row lock as membership. Failed notification insertion rolls back the join. No-op/concurrent duplicate joins, leave, rejected joins and organizer self-membership do not create events; a later real rejoin creates a new event. There is no backfill or change to seed data.
+
+`GET /api/v1/notifications?limit=20&after=…` filters recipient/type before bounded `createdAt DESC, id DESC` pagination, with a consistent snapshot per page. Rows expose only id/type/createdAt/readAt, safe actor `{ id, displayName, handle, avatar }` or null, and lobby `{ id, title }` or null. Actor names/avatars and lobby titles are **current**, not historical snapshots. Cancelled/non-PUBLISHED lobbies are hidden without deleting the notification; deleted actors use a neutral placeholder. A notification records a past join, not current membership. Existing other notification types remain in the DB but are excluded from this API.
+
+The separate **Mark as read** action uses bodyless `POST /api/v1/notifications/:id/read`. Repeated/concurrent requests keep the first readAt. The UI waits for a matching valid receipt; unknown outcomes offer an explicit safe retry with no automatic network retry (existing bounded auth rejection refresh is preserved). Late GET/page data cannot undo confirmed read state. Loading/empty/error/retry, independent next-page errors, deduplication, real avatar placeholders/dates and logout/account/unmount guards are covered by tests. Available lobby rows open real details over Activity; Close returns to the same list. A lobby that became inaccessible shows the existing real-details 404 state, not another record.
+
+No push delivery, polling, WebSocket, bottom-nav badge, mark-all, unread reversal, deletion, or edit/cancel/chat/other-type notifications. Other users' events appear on opening/Refresh, not realtime. Native/physical-phone testing is separate from the browser smoke test. Schema, seed and Auth/SessionCoordinator are unchanged.
 
 ## Checks
 

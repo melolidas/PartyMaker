@@ -123,7 +123,7 @@ The shared `configureApp` applies the same policy in tests and production bootst
 
 `npm run test:cors` runs the CORS/configuration checks without PostgreSQL or `.env`. The same tests also run in `npm test`, alongside the database-backed Auth/Profile suite.
 
-On web, refresh tokens remain **memory-only**; reloading the page requires explicit sign-in. There is no cookie or localStorage session persistence. Profile changes, newly created lobbies and text messages persist in PostgreSQL. Home and Search load real upcoming lobbies, personal memberships and details with working join/leave. The paper-plane inbox loads available JOINED chats, including past PUBLISHED events. Schedule editing/physical deletion, Moments, Activity/Notifications and media APIs other than profile avatars remain unimplemented; existing demo sections stay separate and labeled.
+On web, refresh tokens remain **memory-only**; reloading the page requires explicit sign-in. There is no cookie or localStorage session persistence. Profile changes, newly created lobbies and text messages persist in PostgreSQL. Home and Search load real upcoming lobbies, personal memberships and details with working join/leave. The paper-plane inbox loads available JOINED chats, including past PUBLISHED events. Activity now lists real LOBBY_JOINED events for organizers. Schedule editing/physical deletion, Moments, other notification types and media APIs other than profile avatars remain unimplemented; existing demo sections stay separate and labeled.
 
 ## Auth and profile API
 
@@ -216,7 +216,7 @@ The ReadCommitted transaction takes the same parameterized Lobby `FOR UPDATE` ro
 
 CANCELLED events disappear from all/mine/search/inbox; details and messages return 404, including for the organizer. Owner access to the idempotent cancel endpoint does not grant archive/history access. Reads already running before cancellation may finish against their earlier snapshot.
 
-The client must validate the cancel POST receipt, not infer success from GET 404 or an absent card. An uncertain network/5xx/invalid response retains an in-memory target for an explicit same-id retry, even after startsAt; no automatic network retry. A successful receipt closes details and invalidates all available lobby/chat views for the current session. Restore/physical deletion, archive endpoints, notifications and organizer transfer remain unavailable.
+The client must validate the cancel POST receipt, not infer success from GET 404 or an absent card. An uncertain network/5xx/invalid response retains an in-memory target for an explicit same-id retry, even after startsAt; no automatic network retry. A successful receipt closes details and invalidates all available lobby/chat views for the current session. Restore/physical deletion, archive endpoints, cancellation notifications and organizer transfer remain unavailable.
 
 `npm test` includes isolated PostgreSQL cancellation fixtures: ownership/status/time/field validation, history preservation, post-start replay without timestamp changes, visibility across all lists, and genuine overlapping cancel/cancel, cancel/join and cancel/send transactions in both applicable orders. The concurrency helper observes actual lock waits before releasing a blocker; requests are not a sequential imitation. Root README describes the two-user browser smoke and unconfirmed response/retry check.
 
@@ -235,7 +235,7 @@ Returns **201** with the same safe Lobby DTO. Required JSON fields:
 
 The authenticated user supplies `organizerId` implicitly through the guard. The server sets `status=PUBLISHED` and `minParticipants=2`. Unknown/internal fields (`organizerId`, `status`, `members`, `id`, media, etc.) return `400 VALIDATION_FAILED`, as do invalid inputs. A nested Prisma create atomically inserts the lobby and exactly one organizer membership (`role=ORGANIZER`, `status=JOINED`); a child-insert failure rolls back the lobby. The response immediately reports `joinedCount=1`, `isJoined=true` and the organizer's real group score.
 
-Creation POST has no idempotency key or automatic network retry. A lost response can mean the record was already saved; inspect the catalog or personal list before explicitly resubmitting. The frontend only retries after a definite guard rejection (`401 INVALID_ACCESS_TOKEN`) using its existing refresh mechanism. Home and View all now show real upcoming participation. Organizer cancellation is documented above; completed-event history, schedule editing/physical deletion, invitations, notifications, organizer transfer and lobby/message media remain out of scope.
+Creation POST has no idempotency key or automatic network retry. A lost response can mean the record was already saved; inspect the catalog or personal list before explicitly resubmitting. The frontend only retries after a definite guard rejection (`401 INVALID_ACCESS_TOKEN`) using its existing refresh mechanism. Home and View all now show real upcoming participation. Organizer cancellation is documented above; completed-event history, schedule editing/physical deletion, invitations, push/other notification types, organizer transfer and lobby/message media remain out of scope.
 
 `npm test` includes database-backed Lobby tests using isolated random-UUID fixtures, cleaned up by their own ids; it never resets or reseeds the database. The seed updates fixed records, so do not rerun it just to refresh Home dates in an existing database. Existing past seed events correctly produce an empty upcoming catalog. For a manual smoke test, create isolated future PUBLISHED fixtures with known ids and clean up only those fixtures; see the root README for list/details/empty/error-retry steps.
 
@@ -251,7 +251,7 @@ POST uses the same Lobby `FOR UPDATE` row lock and ReadCommitted transaction as 
 
 `npm test` includes real PostgreSQL read/send, privacy, validation, deleted-history, tuple-pagination and idempotency tests. Concurrent send/replay and send/leave tests observe both HTTP transactions waiting on actual PostgreSQL locks, not sequential mocks. Fixtures are isolated and deleted only by their known ids.
 
-Expo displays chronological history, older-page loading with a retained reading position, manual latest Refresh, confirmed sends and explicit same-id retries. Initial opening and a confirmed own send show the newest end; Refresh retains loaded history without forcing a reader of older messages down. No polling, notifications, attachments, reactions, read receipts, typing, message edit/delete, member list or WebSocket.
+Expo displays chronological history, older-page loading with a retained reading position, manual latest Refresh, confirmed sends and explicit same-id retries. Initial opening and a confirmed own send show the newest end; Refresh retains loaded history without forcing a reader of older messages down. No polling, chat notifications, attachments, reactions, read receipts, typing, message edit/delete or WebSocket. The separate real member list is described below.
 
 ## Available chat inbox
 
@@ -305,7 +305,19 @@ Bearer and Lobby.organizerId ownership are required (membership.role does not gr
 
 ReadCommitted plus the shared Lobby FOR UPDATE serializes PATCH with join/leave/cancel/send. Status/organizer/start time and JOINED count are reread after the lock wait; the clock is sampled after acquiring the lock. Only provided fields are written, so independent patches do not overwrite one another. For the same field, last successful commit wins. There is no version/ETag conflict protocol. startsAt (including precision), timeZone, organizer, status, minParticipants, memberships/timestamps and messages remain unchanged except normal Lobby.updatedAt.
 
-No notifications or schedule editing. External edits appear on manual refresh. Network uncertainty is not success: the frontend preserves the draft, permits a manual GET comparison and explicit PATCH retry, with only the existing bounded auth rejection retry. A GET is not a receipt for a particular PATCH. Tests include real overlapping PostgreSQL lock waits, capacity races, cancellation and a controlled clock advancing while a request waits. No schema/migration/seed changes are needed.
+No edit notifications or schedule editing. External edits appear on manual refresh. Network uncertainty is not success: the frontend preserves the draft, permits a manual GET comparison and explicit PATCH retry, with only the existing bounded auth rejection retry. A GET is not a receipt for a particular PATCH. Tests include real overlapping PostgreSQL lock waits, capacity races, cancellation and a controlled clock advancing while a request waits. No schema/migration/seed changes are needed.
+
+## Notifications: first limited Activity slice
+
+Only `NotificationType.LOBBY_JOINED` is supported. `GET /api/v1/notifications?limit=20&after=<cursor>` requires Bearer, filters recipientId from that user and type BEFORE pagination, and returns `{ items, nextCursor }`. Limit is 1–50; order/cursor are createdAt DESC, id DESC. Unknown query fields, arrays/objects, unsupported dates/UUIDs and malformed cursors return 400 VALIDATION_FAILED. A RepeatableRead transaction provides a consistent bounded page and current related projections.
+
+Each item: `{ id, type, createdAt, readAt, actor, lobby }`. Actor is null if deleted; otherwise only id/displayName/handle and the existing safe processed-avatar mapper. Lobby is id/title only while PUBLISHED, otherwise null. No email/recipientId/auth/storage paths/Moment/Comment relations are serialized. Titles and names are current related values, not immutable snapshots; the event is historical and does not guarantee current JOINED membership. Cancellation preserves the stored notification but hides its lobby. Other seed notification types remain stored, excluded from this API; no backfill/reseed.
+
+Real absent/LEFT → JOINED transitions create the notification under the same Lobby FOR UPDATE and PostgreSQL transaction as membership. Notification failures roll back participation. Repeated/concurrent already-JOINED requests, leave, refused joins, organizer self-joins and automatic organizer creation do not notify. Real rejoins create a new UUID, not a unique recipient/actor/lobby tuple.
+
+`POST /api/v1/notifications/:id/read` accepts no body/query fields and returns 200 `{ id, readAt }`. The conditional UPDATE includes id/recipientId/type/readAt=null; concurrent requests recheck after the row lock and preserve the first readAt. Foreign/missing/unsupported IDs all return 404 NOTIFICATION_NOT_FOUND, including after being read. There is no read-all/unread/delete endpoint. Both endpoints are in Swagger and `npm test`; tests include real overlapping PostgreSQL transactions and isolated notification-insert failure/rollback.
+
+No push, polling, realtime, badges or other notification types. The frontend opens/refreshes manually and uses the existing session transport. No Prisma schema/migration or auth lifecycle changes.
 
 ## Error response
 
@@ -324,4 +336,4 @@ Every API error is normalized to this shape:
 }
 ```
 
-Health, Auth, Profile including public avatars, Lobby creation/cancellation, catalog/details, join/leave, per-lobby text messages and the available-chat inbox are implemented. Other Lobby mutations, moments, notifications and media other than profile avatars remain outside this stage; demo frontend records are kept separate from real lobbies.
+Health, Auth, Profile including public avatars, Lobby creation/cancellation, catalog/details, join/leave, per-lobby text messages and the available-chat inbox are implemented. Basic organizer editing and LOBBY_JOINED Activity/read are also implemented. Other Lobby mutations, moments, other notification types and media other than profile avatars remain outside this stage; demo frontend records are kept separate from real lobbies.

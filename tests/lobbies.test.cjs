@@ -335,6 +335,162 @@ test('editor synchronously locks duplicate submit; unconfirmed save + GET is not
   assert.deepEqual(payloads, [{ title: 'Draft' }, { title: 'Draft' }]); c.h.unmount();
 });
 
+test('uncertain edit retries current intent, including original values, without reverting untouched server fields', async t => {
+  for (const applied of [true, false]) for (const multiple of [false, true]) for (const check of ['none', 'success', 'error']) {
+    await t.test(`committed=${applied}, multiple=${multiple}, GET=${check}`, async () => {
+      const original = { ...editableLobby(), title: 'Original title', description: 'Original description' };
+      let server = { ...original }, failRead = false; const patches = [], retry = deferred();
+      const c = editHost({ getLobby: async () => { if (failRead) throw Error('GET unavailable'); return { ...server }; },
+        updateLobby: async (_id, patch) => {
+          patches.push(patch);
+          if (patches.length === 1) {
+            if (applied) server = { ...server, ...patch };
+            throw new ApiClientError({ code: 'NETWORK_ERROR', statusCode: 0, message: 'Lost response' });
+          }
+          await retry.promise; server = { ...server, ...patch }; return { ...server };
+        } });
+      c.render(); await flush(); byId(c.render(), 'edit-title').props.onChangeText('New title');
+      if (multiple) byId(c.render(), 'edit-description').props.onChangeText('New description');
+      byId(c.render(), 'edit-submit').props.onPress(); await flush();
+      assert.equal(server.title, applied ? 'New title' : original.title);
+      assert.equal(c.saved.length, 0); assert.match(texts(byId(c.render(), 'edit-error')), /не подтверждено/);
+      // A different device edits fields the draft never touched.
+      server = { ...server, category: 'SPORT', capacity: 9 };
+      if (check !== 'none') {
+        failRead = check === 'error'; byId(c.render(), 'edit-check').props.onPress(); await flush();
+        assert.equal(!!byId(c.render(), 'edit-check-error'), failRead);
+      }
+      assert.equal(c.saved.length, 0); assert.equal(patches.length, 1);
+      assert.equal(byId(c.render(), 'edit-title').props.value, 'New title');
+      byId(c.render(), 'edit-title').props.onChangeText(original.title);
+      const submit = byId(c.render(), 'edit-submit').props.onPress; submit(); submit();
+      assert.deepEqual(patches[1], { title: original.title, ...(multiple ? { description: 'New description' } : {}) });
+      assert.equal(patches.length, 2); assert.equal(c.saved.length, 0);
+      assert.equal(byId(c.render(), 'edit-submit').props.disabled, true);
+      retry.resolve(); await flush();
+      assert.equal(c.saved.length, 1); assert.equal(c.saved[0].title, original.title);
+      assert.deepEqual(server, { ...original, description: multiple ? 'New description' : original.description, category: 'SPORT', capacity: 9 });
+      assert.equal(byId(c.render(), 'edit-title').props.value, original.title);
+      assert.equal(byId(c.render(), 'edit-description').props.value, multiple ? 'New description' : original.description);
+      c.h.unmount();
+    });
+  }
+});
+
+test('uncertain online/venue reversion retries the complete original pair, in both directions', async () => {
+  for (const online of [true, false]) {
+    const original = { ...editableLobby(), isOnline: online, venueName: online ? null : 'Original cafe' };
+    let server = { ...original }; const patches = [];
+    const c = editHost({ getLobby: async () => ({ ...server }), updateLobby: async (_id, patch) => {
+      patches.push(patch); server = { ...server, ...patch };
+      if (patches.length === 1) throw Error('Committed, response lost'); return { ...server };
+    } });
+    c.render(); await flush(); byId(c.render(), online ? 'edit-offline' : 'edit-online').props.onPress();
+    if (online) byId(c.render(), 'edit-venue').props.onChangeText('New cafe');
+    byId(c.render(), 'edit-submit').props.onPress(); await flush();
+    byId(c.render(), 'edit-check').props.onPress(); await flush(); assert.equal(c.saved.length, 0);
+    byId(c.render(), online ? 'edit-online' : 'edit-offline').props.onPress();
+    byId(c.render(), 'edit-submit').props.onPress(); await flush();
+    assert.deepEqual(patches[1], { isOnline: original.isOnline, venueName: original.venueName });
+    assert.deepEqual(server, original); assert.equal(c.saved.length, 1); c.h.unmount();
+  }
+});
+
+test('ordinary undo before first submission and confirmed rejection do not create retry obligations', async () => {
+  for (const rejection of [null, ['VALIDATION_FAILED', 400], ['LOBBY_CAPACITY_BELOW_JOINED', 409], ['LOBBY_CAPACITY_BELOW_MIN_PARTICIPANTS', 409]]) {
+    let server = editableLobby(); const patches = [];
+    const c = editHost({ getLobby: async () => ({ ...server }), updateLobby: async (_id, patch) => {
+      patches.push(patch); throw new ApiClientError({ code: rejection[0], statusCode: rejection[1], message: 'Rejected without commit' });
+    } });
+    c.render(); await flush(); byId(c.render(), 'edit-title').props.onChangeText('Temporary title');
+    if (rejection) { byId(c.render(), 'edit-submit').props.onPress(); await flush(); }
+    byId(c.render(), 'edit-title').props.onChangeText(server.title);
+    byId(c.render(), 'edit-submit').props.onPress(); await flush();
+    assert.equal(patches.length, rejection ? 1 : 0); assert.match(texts(byId(c.render(), 'edit-error')), /Нет изменений/);
+    assert.deepEqual(server, editableLobby()); assert.equal(c.saved.length, 0); c.h.unmount();
+  }
+});
+
+test('rejected retry neither forgets older uncertainty nor adds its newly rejected fields', async () => {
+  const original = editableLobby(); let server = { ...original }; const patches = [];
+  const c = editHost({ getLobby: async () => ({ ...server }), updateLobby: async (_id, patch) => {
+    patches.push(patch);
+    if (patches.length === 2) throw new ApiClientError({ code: 'LOBBY_CAPACITY_BELOW_MIN_PARTICIPANTS', statusCode: 409, message: 'Rejected' });
+    server = { ...server, ...patch };
+    if (patches.length === 1) throw Error('Lost response'); return { ...server };
+  } });
+  c.render(); await flush(); byId(c.render(), 'edit-title').props.onChangeText('New title');
+  byId(c.render(), 'edit-submit').props.onPress(); await flush();
+  byId(c.render(), 'edit-title').props.onChangeText(original.title);
+  byId(c.render(), 'edit-description').props.onChangeText('Rejected description'); byId(c.render(), 'edit-capacity').props.onChangeText('2');
+  byId(c.render(), 'edit-submit').props.onPress(); await flush(); assert.equal(c.saved.length, 0);
+  byId(c.render(), 'edit-description').props.onChangeText(original.description); byId(c.render(), 'edit-capacity').props.onChangeText(String(original.capacity));
+  byId(c.render(), 'edit-submit').props.onPress(); await flush();
+  assert.deepEqual(patches[2], { title: original.title }); assert.deepEqual(server, original); assert.equal(c.saved.length, 1); c.h.unmount();
+});
+
+test('5xx and malformed receipts retain retry intent; valid receipt alone permits success', async () => {
+  for (const outcome of ['5xx', 'invalid', 'unknown409', 'unknown400']) {
+    let server = editableLobby(); const original = { ...server }, patches = [], saved = [];
+    const store = new editLogic.EditLobbyFormStore({ getLobby: async () => ({ ...server }), updateLobby: async (_id, patch) => {
+      patches.push(patch); server = { ...server, ...patch };
+      if (patches.length === 1) {
+        if (outcome === 'invalid') return { id: server.id };
+        const statusCode = outcome === '5xx' ? 503 : outcome === 'unknown400' ? 400 : 409;
+        throw new ApiClientError({ code: `HTTP_${statusCode}`, statusCode, message: 'Unknown result' });
+      }
+      return { ...server };
+    } }, value => saved.push(value));
+    store.setContext('A', lobby.id); await flush(); store.update({ title: 'New title' }); await store.submit();
+    await store.check(true); assert.equal(store.getSnapshot().saved, false); assert.equal(store.getSnapshot().error, 'edit.unconfirmed'); assert.equal(saved.length, 0);
+    store.update({ title: original.title }); await store.submit();
+    assert.deepEqual(patches[1], { title: original.title }); assert.deepEqual(server, original); assert.equal(saved.length, 1);
+  }
+});
+
+test('multiple uncertain attempts accumulate only their submitted fields until an explicit acknowledged save', async () => {
+  const original = editableLobby(), patches = [], saved = []; let server = { ...original };
+  const store = new editLogic.EditLobbyFormStore({ getLobby: async () => ({ ...server }), updateLobby: async (_id, patch) => {
+    patches.push(patch); server = { ...server, ...patch };
+    if (patches.length < 3) throw Error('Lost response'); return { ...server };
+  } }, value => saved.push(value));
+  store.setContext('A', lobby.id); await flush(); store.update({ title: 'Changed once' }); await store.submit();
+  store.update({ title: original.title, description: 'Changed twice', category: 'SPORT', capacity: '9' }); await store.submit();
+  await store.check(true); assert.equal(saved.length, 0); assert.equal(store.getSnapshot().saved, false);
+  store.update({ description: original.description, category: original.category, capacity: String(original.capacity) }); await store.submit();
+  assert.deepEqual(patches[2], { title: original.title, description: original.description, category: original.category, capacity: original.capacity });
+  assert.deepEqual(server, original); assert.equal(saved.length, 1);
+});
+
+test('uncertain field ownership resets on reopen/account/lobby changes and late rejection cannot contaminate the new draft', async () => {
+  for (const late of [false, true]) for (const transition of ['reopen', 'account', 'lobby']) {
+    const pending = deferred(), patches = [], saved = [];
+    const store = new editLogic.EditLobbyFormStore({ getLobby: async id => ({ ...editableLobby(), id }), updateLobby: async (_id, patch) => {
+      patches.push(patch); await pending.promise; throw Error('Old uncertain attempt');
+    } }, value => saved.push(value));
+    store.setContext('A', lobby.id); await flush(); store.update({ title: 'Old draft' }); const first = store.submit();
+    if (!late) { pending.resolve(); await first; }
+    if (transition === 'reopen') { store.setContext(null, lobby.id); store.setContext('A', lobby.id); }
+    if (transition === 'account') store.setContext('B', lobby.id);
+    if (transition === 'lobby') store.setContext('A', 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb');
+    await flush(); pending.resolve(); await first;
+    store.update({ title: 'New local draft' }); store.update({ title: editableLobby().title }); await store.submit();
+    assert.equal(store.getSnapshot().error, 'edit.noChanges'); assert.equal(store.getSnapshot().fields.title, editableLobby().title);
+    assert.equal(patches.length, 1); assert.deepEqual(saved, []);
+  }
+});
+
+test('403/404/LOBBY_STARTED still block uncertain retries without a success receipt', async () => {
+  for (const [code, statusCode] of [['LOBBY_ORGANIZER_REQUIRED', 403], ['LOBBY_NOT_FOUND', 404], ['LOBBY_STARTED', 409]]) {
+    let patches = 0; const saved = [], store = new editLogic.EditLobbyFormStore({ getLobby: async () => editableLobby(), updateLobby: async () => {
+      if (++patches === 1) throw Error('Lost response'); throw new ApiClientError({ code, statusCode, message: 'Unavailable' });
+    } }, value => saved.push(value));
+    store.setContext('A', lobby.id); await flush(); store.update({ title: 'New title' }); await store.submit();
+    store.update({ title: editableLobby().title }); await store.submit(); await store.submit();
+    assert.equal(store.getSnapshot().blocked, true); assert.equal(patches, 2); assert.equal(store.getSnapshot().error, 'edit.unavailable'); assert.deepEqual(saved, []);
+  }
+});
+
 test('editor invalid receipts never confirm, business errors preserve draft, GET404 blocks without success or reload loops', async () => {
   for (const reply of [null, { id: lobby.id }, { ...editableLobby(), id: 'wrong' }, { ...editableLobby(), email: 'private' }, { ...editableLobby(), category: ['FOOD'] }]) {
     const c = editHost({ updateLobby: async () => reply }); c.render(); await flush(); byId(c.render(), 'edit-title').props.onChangeText('Draft');

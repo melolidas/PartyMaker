@@ -4,15 +4,16 @@ import type { Lobby, LobbyApi, UpdateLobbyInput } from '../../api/lobbyTypes';
 import type { TranslationKey } from '../../i18n/translations';
 import { validateLobbyBasics, type LobbyEditableFields } from './createLobbyForm';
 
-export function changedLobbyFields(base: Lobby, fields: LobbyEditableFields): UpdateLobbyInput | TranslationKey {
+type EditableField = keyof UpdateLobbyInput;
+export function changedLobbyFields(base: Lobby, fields: LobbyEditableFields, uncertainFields: ReadonlySet<EditableField> = new Set()): UpdateLobbyInput | TranslationKey {
   const input = validateLobbyBasics(fields);
   if (typeof input === 'string') return input;
   const patch: UpdateLobbyInput = {};
-  if (input.title !== base.title) patch.title = input.title;
-  if (input.description !== base.description) patch.description = input.description;
-  if (input.category !== base.category) patch.category = input.category;
-  if (input.capacity !== base.capacity) patch.capacity = input.capacity;
-  return input.isOnline !== base.isOnline || input.venueName !== base.venueName
+  if (uncertainFields.has('title') || input.title !== base.title) patch.title = input.title;
+  if (uncertainFields.has('description') || input.description !== base.description) patch.description = input.description;
+  if (uncertainFields.has('category') || input.category !== base.category) patch.category = input.category;
+  if (uncertainFields.has('capacity') || input.capacity !== base.capacity) patch.capacity = input.capacity;
+  return uncertainFields.has('isOnline') || uncertainFields.has('venueName') || input.isOnline !== base.isOnline || input.venueName !== base.venueName
     ? { ...patch, isOnline: input.isOnline, venueName: input.venueName } : patch;
 }
 export type EditLobbyState = {
@@ -23,12 +24,21 @@ export type EditLobbyState = {
 export const emptyEditLobby = (account: string | null, id: string): EditLobbyState => ({ account, id, base: null, fields: null,
   checking: !!account, submitting: false, blocked: false, error: null, checkError: false, checked: null, saved: false });
 const unavailable = (error: unknown) => error instanceof ApiClientError && (error.statusCode === 403 || error.statusCode === 404 || error.code === 'LOBBY_STARTED');
+// Only known API rejections prove this attempt did not commit. Transport errors,
+// malformed receipts and unknown responses must conservatively retain its intent.
+const rejectionStatuses: Record<string, number> = {
+  VALIDATION_FAILED: 400, INVALID_ACCESS_TOKEN: 401, INVALID_REFRESH_TOKEN: 401,
+  LOBBY_ORGANIZER_REQUIRED: 403, LOBBY_NOT_FOUND: 404, LOBBY_STARTED: 409,
+  LOBBY_CAPACITY_BELOW_JOINED: 409, LOBBY_CAPACITY_BELOW_MIN_PARTICIPANTS: 409,
+};
+const confirmedRejection = (error: unknown): error is ApiClientError => error instanceof ApiClientError && rejectionStatuses[error.code] === error.statusCode;
 function errorKey(error: unknown): TranslationKey {
   if (unavailable(error)) return 'edit.unavailable';
-  if (error instanceof ApiClientError) {
+  if (confirmedRejection(error)) {
     if (error.code === 'LOBBY_CAPACITY_BELOW_JOINED') return 'edit.capacityJoined';
     if (error.code === 'LOBBY_CAPACITY_BELOW_MIN_PARTICIPANTS') return 'edit.capacityMinimum';
     if (error.statusCode === 400) return 'edit.validation';
+    return 'edit.rejected';
   }
   return 'edit.unconfirmed';
 }
@@ -38,6 +48,9 @@ export class EditLobbyFormStore {
   private generation = 0;
   private read = 0;
   private checkAfterSubmit = false;
+  // Field names only, not old values. GET never discharges an unconfirmed write.
+  // Retrying uses the current validated draft, including an undo back to base.
+  private uncertainFields = new Set<EditableField>();
   private state = emptyEditLobby(null, '');
   private listeners = new Set<() => void>();
   constructor(private readonly api: Pick<LobbyApi, 'getLobby' | 'updateLobby'>, private readonly onSaved: (lobby: Lobby) => void) {}
@@ -47,6 +60,7 @@ export class EditLobbyFormStore {
   setContext(account: string | null, id: string) {
     if (account === this.state.account && id === this.state.id) return;
     this.generation++; this.read++; this.checkAfterSubmit = false;
+    this.uncertainFields.clear();
     this.publish(emptyEditLobby(account, id)); if (account) void this.check();
   }
   update = (fields: Partial<LobbyEditableFields>) => {
@@ -83,7 +97,7 @@ export class EditLobbyFormStore {
     const { account, base, fields, submitting, checking, blocked, saved } = this.state;
     if (!account || !base || !fields || submitting || checking || blocked || saved) return;
     if (Date.parse(base.startsAt) <= Date.now()) { this.publish({ ...this.state, blocked: true, error: 'edit.unavailable' }); return; }
-    const input = changedLobbyFields(base, fields);
+    const input = changedLobbyFields(base, fields, this.uncertainFields);
     if (typeof input === 'string') { this.publish({ ...this.state, error: input }); return; }
     if (!Object.keys(input).length) { this.publish({ ...this.state, error: 'edit.noChanges' }); return; }
     const generation = this.generation; this.read++;
@@ -96,12 +110,16 @@ export class EditLobbyFormStore {
       updated = lobby;
     } catch (error) {
       if (generation !== this.generation) return;
+      // A rejected retry does not erase uncertainty from earlier attempts, nor
+      // add any newly rejected field. Never mutate the next opening's intent.
+      if (!confirmedRejection(error)) for (const key of Object.keys(input) as EditableField[]) this.uncertainFields.add(key);
       const check = this.checkAfterSubmit; this.checkAfterSubmit = false;
       this.publish({ ...this.state, submitting: false, blocked: this.state.blocked || unavailable(error), error: errorKey(error) });
       if (check) void this.check();
       return;
     }
     this.checkAfterSubmit = false;
+    this.uncertainFields.clear();
     this.publish({ ...this.state, submitting: false, saved: true });
     this.onSaved(updated);
   };

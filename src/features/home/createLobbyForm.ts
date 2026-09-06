@@ -6,16 +6,18 @@ import type { TranslationKey } from '../../i18n/translations';
 export const CREATE_LOBBY_TIME_ZONE = 'Asia/Bishkek';
 export const LOBBY_CATEGORIES: LobbyCategory[] = ['DRINKS', 'GAMING', 'FOOD', 'SPORT', 'MOVIES', 'OUTDOORS'];
 export type LobbyFormFields = {
-  title: string; description: string; category: LobbyCategory; date: string; time: string;
+  title: string; description: string; date: string; time: string;
   capacity: string; isOnline: boolean; venueName: string;
 };
-export type LobbyEditableFields = Pick<LobbyFormFields, 'title' | 'description' | 'category' | 'capacity' | 'isOnline' | 'venueName'>;
+type LobbyBasicFields = Pick<LobbyFormFields, 'title' | 'description' | 'capacity' | 'isOnline' | 'venueName'>;
+// Kept only for editing legacy categorized lobbies; creation has no category.
+export type LobbyEditableFields = LobbyBasicFields & { category: LobbyCategory | null };
 export type LobbyFormState = {
   account: string | null; fields: LobbyFormFields; submitting: boolean; error: TranslationKey | null;
 };
 export function emptyLobbyForm(account: string | null = null): LobbyFormState {
   return { account, submitting: false, error: null, fields: {
-    title: '', description: '', category: 'FOOD', date: '', time: '', capacity: '6', isOnline: false, venueName: '',
+    title: '', description: '', date: '', time: '', capacity: '6', isOnline: false, venueName: '',
   } };
 }
 
@@ -37,15 +39,14 @@ export function bishkekDateTimeToInstant(date: string, time: string): string | n
   return instant.toISOString();
 }
 
-export function validateLobbyBasics(fields: LobbyEditableFields): Omit<CreateLobbyInput, 'startsAt' | 'timeZone'> | TranslationKey {
+export function validateLobbyBasics(fields: LobbyBasicFields): Omit<CreateLobbyInput, 'startsAt' | 'timeZone'> | TranslationKey {
   const title = fields.title.trim(); const description = fields.description.trim();
   if (!title || Array.from(title).length > 40) return 'create.error.title';
   if (!description || Array.from(description).length > 200) return 'create.error.description';
-  if (!LOBBY_CATEGORIES.includes(fields.category)) return 'create.error.category';
   if (!/^\d+$/.test(fields.capacity.trim()) || Number(fields.capacity) < 2 || Number(fields.capacity) > 2147483647) return 'create.error.capacity';
   const venueName = fields.isOnline ? null : fields.venueName.trim();
   if (venueName !== null && (!venueName || Array.from(venueName).length > 140)) return 'create.error.venue';
-  return { title, description, category: fields.category,
+  return { title, description,
     capacity: Number(fields.capacity), isOnline: fields.isOnline, venueName };
 }
 

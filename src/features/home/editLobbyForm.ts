@@ -2,16 +2,19 @@ import { ApiClientError } from '../../api/errors';
 import { isLobbyResponse } from '../../api/lobbyResponse';
 import type { Lobby, LobbyApi, UpdateLobbyInput } from '../../api/lobbyTypes';
 import type { TranslationKey } from '../../i18n/translations';
-import { validateLobbyBasics, type LobbyEditableFields } from './createLobbyForm';
+import { LOBBY_CATEGORIES, validateLobbyBasics, type LobbyEditableFields } from './createLobbyForm';
 
 type EditableField = keyof UpdateLobbyInput;
 export function changedLobbyFields(base: Lobby, fields: LobbyEditableFields, uncertainFields: ReadonlySet<EditableField> = new Set()): UpdateLobbyInput | TranslationKey {
   const input = validateLobbyBasics(fields);
   if (typeof input === 'string') return input;
+  if (fields.category !== null && !LOBBY_CATEGORIES.includes(fields.category)) return 'create.error.category';
+  // Null is valid persisted data, not an instruction to clear a legacy category.
+  if (fields.category === null && base.category !== null) return 'create.error.category';
   const patch: UpdateLobbyInput = {};
   if (uncertainFields.has('title') || input.title !== base.title) patch.title = input.title;
   if (uncertainFields.has('description') || input.description !== base.description) patch.description = input.description;
-  if (uncertainFields.has('category') || input.category !== base.category) patch.category = input.category;
+  if (fields.category !== null && (uncertainFields.has('category') || fields.category !== base.category)) patch.category = fields.category;
   if (uncertainFields.has('capacity') || input.capacity !== base.capacity) patch.capacity = input.capacity;
   return uncertainFields.has('isOnline') || uncertainFields.has('venueName') || input.isOnline !== base.isOnline || input.venueName !== base.venueName
     ? { ...patch, isOnline: input.isOnline, venueName: input.venueName } : patch;

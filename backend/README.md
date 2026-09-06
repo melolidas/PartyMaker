@@ -183,7 +183,7 @@ Example: `GET /api/v1/lobbies?scope=mine&q=Sport%20Court&limit=20&after=<opaque-
 - `scope=all|mine` is optional, default `all` (unchanged catalog). `GET /api/v1/lobbies?scope=mine&limit=20&after=<cursor>` adds a JOINED membership filter for the Bearer user, still restricted to future PUBLISHED events. Organizer participation comes through the actual membership created with POST; organizerId alone is insufficient. LEFT/REMOVED, past and unpublished events are excluded. Invalid scope or userId/organizerId query parameters return `400 VALIDATION_FAILED`; clients cannot select another user's list. Pagination is independent of all, with the same tuple ordering and bounds. No total count is returned.
 - `GET /api/v1/lobbies/:id` returns a published lobby, including a past published event. Missing, draft, cancelled or completed lobbies return `404 LOBBY_NOT_FOUND`; malformed UUIDs return validation error 400.
 
-The explicit response projection contains only `id`, `title`, `description`, `category`, `startsAt` (absolute ISO timestamp), `timeZone`, `isOnline`, `venueName` (null for online events), `capacity`, `joinedCount`, `isJoined`, `membershipStatus` (the Bearer user's status or null), `isOrganizer` (from organizerId, not isJoined), and `groupExtroversionLevel`. No participant lists, emails, credential hashes, raw tokens, coordinates or internal media storage keys are exposed. LEFT and REMOVED memberships do not count and do not set `isJoined`.
+The explicit response projection contains only `id`, `title`, `description`, `category` (legacy enum or null when unspecified), `startsAt` (absolute ISO timestamp), `timeZone`, `isOnline`, `venueName` (null for online events), `capacity`, `joinedCount`, `isJoined`, `membershipStatus` (the Bearer user's status or null), `isOrganizer` (from organizerId, not isJoined), and `groupExtroversionLevel`. No participant lists, emails, credential hashes, raw tokens, coordinates or internal media storage keys are exposed. LEFT and REMOVED memberships do not count and do not set `isJoined`.
 
 The group score is `round(sum(JOINED users' extroversionScoreX2) / joinedCount) / 2`: mean level rounded to the nearest half-level, with positive ties upward. It is null when no JOINED users exist. In mine, both count and score still use **all** JOINED members, not only the requesting user. The client hides an absent score and uses category placeholders instead of exposing internal media paths. No distance is claimed without geographic search.
 
@@ -226,12 +226,15 @@ Returns **201** with the same safe Lobby DTO. Required JSON fields:
 
 - `title`: trimmed string, 1–40 Unicode characters.
 - `description`: trimmed string, 1–200 characters.
-- `category`: DRINKS, GAMING, FOOD, SPORT, MOVIES or OUTDOORS.
 - `startsAt`: a real future RFC3339 instant with explicit `Z` or `±HH:MM`, seconds and optional 1–3 fractional digits. Both civil and UTC years must be 0001–9999. Invalid calendar dates, implicit local time, 24:00 and extended years are rejected.
 - `timeZone`: valid named IANA zone (up to 64 characters), e.g. `Asia/Bishkek`; numeric offset strings are not IANA zones. It controls display and does not override the absolute instant.
 - `capacity`: integer 2–2147483647 (PostgreSQL INTEGER range, not a new product limit).
 - `isOnline`: JSON boolean, not a string or number.
 - `venueName`: explicitly null online; trimmed nonempty string up to 140 characters offline.
+
+`category` is optional for compatibility with earlier clients. Omission or explicit null is stored and returned as null, with no guessed/default category. A supplied DRINKS, GAMING, FOOD, SPORT, MOVIES or OUTDOORS value is preserved; invalid non-null strings, numbers, booleans, arrays and objects return `400 VALIDATION_FAILED`. Existing categorized records retain their values. The current creation screen does not ask for or submit a category.
+
+Migration `20260906200000_optional_lobby_category` only drops NOT NULL from `Lobby.category`; it does not replace the enum, set a default, backfill, reset or rewrite records. Review the SQL, then run `npm run prisma:validate`, `npm run prisma:migrate:deploy` and `npm run prisma:generate` from `backend/` before building/restarting the updated backend. Use the existing DATABASE_URL; do not reset or reseed. Catalog, details, mine/search, chat inbox and own history all retain the category key with a nullable enum value. Regression tests cover omitted/null creation, every preserved legacy enum, invalid non-null inputs, nullable read projections and editing other fields without adding a category.
 
 The authenticated user supplies `organizerId` implicitly through the guard. The server sets `status=PUBLISHED` and `minParticipants=2`. Unknown/internal fields (`organizerId`, `status`, `members`, `id`, media, etc.) return `400 VALIDATION_FAILED`, as do invalid inputs. A nested Prisma create atomically inserts the lobby and exactly one organizer membership (`role=ORGANIZER`, `status=JOINED`); a child-insert failure rolls back the lobby. The response immediately reports `joinedCount=1`, `isJoined=true` and the organizer's real group score.
 
@@ -259,7 +262,7 @@ Expo displays chronological history, older-page loading with a retained reading 
 
 Response: `{ items, nextCursor }`. Each item contains only:
 
-- `lobby: { id, title, category }`;
+- `lobby: { id, title, category }`, where category is a legacy enum or null;
 - `lastMessage: null | { id, preview, createdAt, author: { id, displayName } }`;
 - `activityAt`: latest undeleted message createdAt, or Lobby.createdAt if there are no undeleted messages.
 
@@ -303,6 +306,8 @@ Each page shares an access/data snapshot, but separate pages are not frozen. Ext
 
 Bearer and Lobby.organizerId ownership are required (membership.role does not grant editing). Only a future PUBLISHED lobby is editable. Send a nonempty partial body with changed `title` (trim, 1–40), `description` (trim, 1–200), existing `category`, integer `capacity` (2–2147483647), or the **complete pair** `isOnline`/`venueName`. Online requires null venue; offline requires a trimmed nonempty name up to 140 characters. Omitted properties are allowed, arbitrary null is not. Empty/invalid bodies, unknown fields and any query fields return `400 VALIDATION_FAILED`.
 
+The PATCH category contract remains unchanged: omission preserves the stored value (including null), while a supplied category must be a valid enum; `category:null` is still rejected. An uncategorized lobby can therefore edit its other fields without assigning a category.
+
 200 returns the existing safe Lobby DTO. Missing/non-PUBLISHED returns `404 LOBBY_NOT_FOUND`; a different organizer returns `403 LOBBY_ORGANIZER_REQUIRED`; started events return `409 LOBBY_STARTED`. Capacity below actual JOINED returns `409 LOBBY_CAPACITY_BELOW_JOINED`; below persisted minimum returns `409 LOBBY_CAPACITY_BELOW_MIN_PARTICIPANTS`. Effective capacity must be at least max(2, minParticipants, joinedCount); LEFT/REMOVED do not count. No automatic participant removal or minimum reduction.
 
 ReadCommitted plus the shared Lobby FOR UPDATE serializes PATCH with join/leave/cancel/send. Status/organizer/start time and JOINED count are reread after the lock wait; the clock is sampled after acquiring the lock. Only provided fields are written, so independent patches do not overwrite one another. For the same field, last successful commit wins. There is no version/ETag conflict protocol. startsAt (including precision), timeZone, organizer, status, minParticipants, memberships/timestamps and messages remain unchanged except normal Lobby.updatedAt.
@@ -331,7 +336,7 @@ Bearer-only scheduled participation history. The SQL filter requires the current
 
 `limit` defaults to 20 (integer 1–50); `after` is an opaque canonical base64url JSON tuple of canonical UTC startsAt (AD years 0001–9999) and UUID id. Missing/empty/malformed tuple data, arrays/objects, invalid dates/UUIDs and unknown query keys return 400 VALIDATION_FAILED. A cursor only positions the page; it never changes time/status/membership filters. One bounded database SELECT with limit+1 provides a consistent statement snapshot, ordered startsAt DESC, id DESC. Separate pages are not frozen: Refresh to see new leading history entries.
 
-200 `{ items, nextCursor }`, each item exactly `{ id, title, description, category, startsAt, timeZone, isOnline, venueName, isOrganizer }`; online venueName is null. No totalCount, full User/Lobby, address, coordinates, participants, messages, media storage paths or auth data. COMPLETED is exposed only through this narrow own-history projection; ordinary details/messages/members access is unchanged.
+200 `{ items, nextCursor }`, each item exactly `{ id, title, description, category, startsAt, timeZone, isOnline, venueName, isOrganizer }`; category is a legacy enum or null and online venueName is null. No totalCount, full User/Lobby, address, coordinates, participants, messages, media storage paths or auth data. COMPLETED is exposed only through this narrow own-history projection; ordinary details/messages/members access is unchanged.
 
 There is no end time or attendance evidence. Reaching startsAt does not imply physical attendance or event completion. No status mutation, cron, new schema/migration/seed data or background processing. Frontend cards are read-only and update on opening/Refresh, not realtime. PostgreSQL history tests run in the standard npm test and remove only their isolated fixtures.
 

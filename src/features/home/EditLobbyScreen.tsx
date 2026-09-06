@@ -60,14 +60,14 @@ export function EditLobbyScreen({ lobbyId, onBack, onSaved, onAccessLost }: {
           <Text style={styles.label}>{t('create.description')}</Text>
           <TextInput testID="edit-description" accessibilityLabel={t('create.description')} value={fields.description} multiline editable={editable} onChangeText={description => store.update({ description })} style={styles.input} />
         </View>
-        <View style={styles.card}>
+        {fields.category !== null ? <View style={styles.card}>
           <Text style={styles.label}>{t('create.category')}</Text>
           <View style={styles.choices}>{LOBBY_CATEGORIES.map(category => <Pressable key={category} testID={`edit-category-${category}`} accessibilityRole="radio"
             accessibilityState={{ checked: fields.category === category, disabled: !editable }} disabled={!editable} onPress={() => store.update({ category })}
             style={[styles.choice, fields.category === category && styles.selected]}>
             <Text style={fields.category === category ? styles.selectedText : styles.note}>{t(categoryLabels[category])}</Text>
           </Pressable>)}</View>
-        </View>
+        </View> : null}
         <View style={styles.card}>
           <Text style={styles.label}>{t('create.maxPeople')}</Text>
           <TextInput testID="edit-capacity" accessibilityLabel={t('create.maxPeople')} keyboardType="number-pad" value={fields.capacity} editable={editable} onChangeText={capacity => store.update({ capacity })} style={styles.input} />
@@ -92,7 +92,7 @@ export function EditLobbyScreen({ lobbyId, onBack, onSaved, onAccessLost }: {
         <Text style={styles.note}>{t('edit.checked')}</Text>
         <Text style={styles.note}>{current.checked.title}</Text>
         <Text style={styles.note}>{current.checked.description}</Text>
-        <Text style={styles.note}>{t(categoryLabels[current.checked.category])} · {t('create.maxPeople')}: {current.checked.capacity}</Text>
+        <Text style={styles.note}>{current.checked.category !== null ? `${t(categoryLabels[current.checked.category])} · ` : ''}{t('create.maxPeople')}: {current.checked.capacity}</Text>
         <Text style={styles.note}>{current.checked.isOnline ? t('home.online') : current.checked.venueName}</Text>
       </View> : null}
       <Pressable testID="edit-check" accessibilityRole="button" disabled={!account || current.checking || current.submitting || current.saved} onPress={() => void store.check(true)}>

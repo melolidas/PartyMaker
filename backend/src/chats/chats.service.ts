@@ -17,7 +17,7 @@ function decodeCursor(value: string): { activityAt: Date; lobbyId: string } {
   } catch { throw new BadRequestException({ code: 'VALIDATION_FAILED', message: 'Invalid chat pagination cursor' }); }
 }
 type ChatRow = {
-  lobbyId: string; title: string; category: LobbyCategory; activityAt: Date;
+  lobbyId: string; title: string; category: LobbyCategory | null; activityAt: Date;
   messageId: string | null; preview: string | null; messageCreatedAt: Date | null;
   authorId: string | null; displayName: string | null;
 };

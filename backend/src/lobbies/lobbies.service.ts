@@ -69,7 +69,7 @@ export class LobbiesService {
     // Nested create is a single atomic Prisma write: no lobby without its organizer membership.
     const lobby = await this.prisma.lobby.create({
       data: {
-        title: input.title, description: input.description, category: input.category,
+        title: input.title, description: input.description, category: input.category ?? null,
         startsAt, timeZone: input.timeZone, capacity: input.capacity,
         isOnline: input.isOnline, venueName: input.venueName,
         organizerId: userId, status: 'PUBLISHED', minParticipants: 2,

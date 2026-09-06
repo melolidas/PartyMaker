@@ -8,7 +8,7 @@ export type Lobby = {
   id: string;
   title: string;
   description: string;
-  category: LobbyCategory;
+  category: LobbyCategory | null;
   startsAt: string;
   timeZone: string;
   isOnline: boolean;
@@ -26,8 +26,8 @@ export type LobbyPage = { items: Lobby[]; nextCursor: string | null };
 export type LobbyHistoryItem = Pick<Lobby, 'id' | 'title' | 'description' | 'category' | 'startsAt' | 'timeZone' | 'isOnline' | 'venueName' | 'isOrganizer'>;
 export type LobbyHistoryPage = { items: LobbyHistoryItem[]; nextCursor: string | null };
 export type LobbyScope = 'all' | 'mine';
-export type CreateLobbyInput = Pick<Lobby, 'title' | 'description' | 'category' | 'startsAt' | 'timeZone' | 'capacity' | 'isOnline' | 'venueName'>;
-export type UpdateLobbyInput = Partial<Pick<Lobby, 'title' | 'description' | 'category' | 'capacity'>> &
+export type CreateLobbyInput = Pick<Lobby, 'title' | 'description' | 'startsAt' | 'timeZone' | 'capacity' | 'isOnline' | 'venueName'>;
+export type UpdateLobbyInput = Partial<Pick<Lobby, 'title' | 'description' | 'capacity'>> & { category?: LobbyCategory } &
   ({ isOnline: boolean; venueName: string | null } | { isOnline?: never; venueName?: never });
 export type LobbyMessage = {
   id: string; lobbyId: string; body: string; createdAt: string;

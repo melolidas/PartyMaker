@@ -1,7 +1,7 @@
-import { ApiProperty } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { LobbyCategory } from '@prisma/client';
 import { Transform } from 'class-transformer';
-import { IsBoolean, IsEnum, IsInt, IsNotEmpty, IsString, IsTimeZone, Matches, Max, MaxLength, Min, Validate, ValidatorConstraint } from 'class-validator';
+import { IsBoolean, IsEnum, IsInt, IsNotEmpty, IsOptional, IsString, IsTimeZone, Matches, Max, MaxLength, Min, Validate, ValidatorConstraint } from 'class-validator';
 import type { ValidationArguments, ValidatorConstraintInterface } from 'class-validator';
 
 import { toTrimmedString } from '../../common/transforms/string.transforms';
@@ -37,8 +37,9 @@ export class CreateLobbyRequestDto {
   @Transform(toTrimmedString) @IsString() @IsNotEmpty() @MaxLength(200)
   description!: string;
 
-  @ApiProperty({ enum: LobbyCategory }) @IsEnum(LobbyCategory)
-  category!: LobbyCategory;
+  @ApiPropertyOptional({ enum: LobbyCategory, nullable: true, description: 'Optional legacy category. Omitted or null is stored as null; a supplied enum value is preserved.' })
+  @IsOptional() @IsEnum(LobbyCategory)
+  category?: LobbyCategory | null;
 
   @ApiProperty({ format: 'date-time', example: '2030-09-06T13:00:00.000Z', description: 'Future RFC3339 instant, explicit Z or offset; years 0001–9999, millisecond precision' })
   @Validate(FutureLobbyInstant)

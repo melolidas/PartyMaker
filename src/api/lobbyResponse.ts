@@ -9,7 +9,7 @@ export function isLobbyResponse(value: unknown, id: string): value is Lobby {
   const row = value as Record<string, unknown>;
   if (Object.keys(row).length !== keys.length || !keys.every(key => Object.prototype.hasOwnProperty.call(row, key))) return false;
   if (row.id !== id || !text(row.title, 40) || !text(row.description, 200)
-    || typeof row.category !== 'string' || !['DRINKS', 'GAMING', 'FOOD', 'SPORT', 'MOVIES', 'OUTDOORS'].includes(row.category)
+    || (row.category !== null && (typeof row.category !== 'string' || !['DRINKS', 'GAMING', 'FOOD', 'SPORT', 'MOVIES', 'OUTDOORS'].includes(row.category)))
     || typeof row.startsAt !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(row.startsAt)
     || !Number.isFinite(Date.parse(row.startsAt)) || new Date(row.startsAt).toISOString() !== row.startsAt
     || !text(row.timeZone, 64)) return false;

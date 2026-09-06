@@ -910,6 +910,45 @@ function editHost(api = {}) {
   return { h, auth, props, saved, result: () => ({ backs, lost }), clock(value) { now = value; }, render: () => h.render(EditLobbyScreen, props) };
 }
 
+test('uncategorized lobby editing never requires a category and accepts nullable read/write receipts', async () => {
+  const server = { ...editableLobby(), category: null }; const writes = [];
+  const c = editHost({ getLobby: async () => server, updateLobby: async (_id, input) => { writes.push(input); return { ...server, ...input }; } });
+  c.render(); await flush();
+  assert.equal(nodes(c.render()).some(n => n.props?.testID?.startsWith('edit-category-')), false);
+  byId(c.render(), 'edit-check').props.onPress(); await flush();
+  assert.ok(byId(c.render(), 'edit-checked'));
+  assert.equal(texts(byId(c.render(), 'edit-checked')).includes('undefined'), false);
+  byId(c.render(), 'edit-title').props.onChangeText('New uncategorized title');
+  byId(c.render(), 'edit-submit').props.onPress(); await flush();
+  assert.deepEqual(writes, [{ title: 'New uncategorized title' }]);
+  assert.equal(c.saved.length, 1); assert.equal(c.saved[0].category, null); c.h.unmount();
+});
+
+test('nullable category validation keeps invalid receipts and legacy category clearing rejected', () => {
+  const { isLobbyResponse } = require('../.expo/lobby-tests/api/lobbyResponse.js');
+  assert.equal(isLobbyResponse({ ...editableLobby(), category: null }, lobby.id), true);
+  assert.equal(isLobbyResponse(editableLobby(), lobby.id), true);
+  for (const category of [undefined, '', 'OTHER', [], {}, 1]) {
+    assert.equal(isLobbyResponse({ ...editableLobby(), category }, lobby.id), false);
+  }
+  const base = editableLobby(), fields = { ...base, capacity: String(base.capacity), category: null };
+  assert.equal(editLogic.changedLobbyFields(base, fields), 'create.error.category');
+  assert.deepEqual(editLogic.changedLobbyFields({ ...base, category: null }, fields), {});
+});
+
+test('shared card placeholder is neutral for uncategorized lobbies and preserves legacy labels', () => {
+  for (const language of ['ru', 'en']) {
+    const h = host({}); const { LobbyCategoryPlaceholder } = h.load('src/features/home/LiveLobbyCard.tsx', {
+      '../../i18n/LocalizationProvider': { useI18n: () => ({ t: createTranslator(language), language }) },
+    });
+    const neutral = h.render(LobbyCategoryPlaceholder, { category: null });
+    assert.equal(nodes(neutral).find(n => n.type === 'Feather').props.name, 'users');
+    assert.equal(texts(neutral).trim(), '');
+    const legacy = h.render(LobbyCategoryPlaceholder, { category: 'SPORT', compact: true });
+    assert.equal(texts(legacy).trim(), createTranslator(language)('category.sport')); h.unmount();
+  }
+});
+
 test('editor loads API values once, fixes original zone/seconds and keeps unsaved draft through background invalidation', async () => {
   let server = editableLobby(); const c = editHost({ getLobby: async () => server });
   c.render(); assert.ok(byId(c.render(), 'edit-loading')); await flush();
@@ -1538,7 +1577,7 @@ test('Lobby requests use existing Bearer transport, one refresh retry, and inval
   assert.equal(token, null);
 });
 
-const draft = () => ({ title: '  My new lobby  ', description: '  User text  ', category: 'FOOD',
+const draft = () => ({ title: '  My new lobby  ', description: '  User text  ',
   date: '2201-01-01', time: '19:00', capacity: '6', isOnline: false, venueName: '  Actual venue  ' });
 
 test('Bishkek date conversion is explicit, supports leap days and rejects normalized/impossible dates', () => {
@@ -1558,13 +1597,15 @@ test('conversion is independent of the host timezone in separate Node processes'
   }
 });
 
-test('form validates trimmed strings, time, capacity, category and conditional venue before POST', () => {
-  const expected = { title: 'My new lobby', description: 'User text', category: 'FOOD', startsAt: '2201-01-01T13:00:00.000Z', timeZone: 'Asia/Bishkek', capacity: 6, isOnline: false, venueName: 'Actual venue' };
+test('form validates real creation fields and never sends a category or hidden default', () => {
+  const expected = { title: 'My new lobby', description: 'User text', startsAt: '2201-01-01T13:00:00.000Z', timeZone: 'Asia/Bishkek', capacity: 6, isOnline: false, venueName: 'Actual venue' };
   assert.deepEqual(validateLobbyForm(draft()), expected);
+  assert.equal(Object.hasOwn(createForm.emptyLobbyForm().fields, 'category'), false);
+  assert.deepEqual(validateLobbyForm({ ...draft(), category: 'FOOD' }), expected, 'Even a stale draft cannot reintroduce a category');
   assert.equal(validateLobbyForm({ ...draft(), isOnline: true, venueName: '' }).venueName, null);
   for (const [change, key] of [
     [{title:'  '}, 'title'], [{title:'x'.repeat(41)}, 'title'], [{description:'\n'}, 'description'], [{description:'x'.repeat(201)}, 'description'],
-    [{category:'invalid'}, 'category'], [{date:'2000-01-01'}, 'schedule'], [{date:'2201-02-30'}, 'schedule'],
+    [{date:'2000-01-01'}, 'schedule'], [{date:'2201-02-30'}, 'schedule'],
     ...['1','2.5','2147483648','2e2','', '-2'].map(capacity => [{capacity}, 'capacity']),
     [{venueName:'  '}, 'venue'], [{venueName:'x'.repeat(141)}, 'venue'],
   ]) assert.equal(validateLobbyForm({ ...draft(), ...change }), 'create.error.' + key);
@@ -1612,7 +1653,7 @@ const screenMocks = auth => ({
   '../features/home/createLobbyForm': createForm,
 });
 
-test('actual Create screen inputs, validation, categories, online toggle, submit lock and retained draft work', async () => {
+test('actual Create screen has no category; validation, online toggle, submit lock and retained draft work', async () => {
   let pending = deferred(); const sent = []; const created = [];
   const auth = {status:'authenticated', user:{id:'A'}, lobbyApi:{createLobby: input => {sent.push(input);return pending.promise;}}};
   const h = host(auth); const {CreateLobbyScreen} = h.load('src/screens/CreateLobbyScreen.tsx', screenMocks(auth));
@@ -1623,15 +1664,16 @@ test('actual Create screen inputs, validation, categories, online toggle, submit
   for (const [id,value] of Object.entries({title:'My title',description:'My description',date:'2201-01-01',time:'19:00',capacity:'4',venue:'Venue'})) {
     byId(render(),'create-'+id).props.onChangeText(value);
   }
-  byId(render(),'create-category-GAMING').props.onPress();
+  assert.equal(nodes(render()).some(n => n.props?.testID?.startsWith('create-category-')), false);
+  assert.equal(texts(render()).includes(createTranslator('ru')('create.category')), false);
   byId(render(),'create-online').props.onPress(); assert.equal(byId(render(),'create-venue'),undefined);
   assert.match(texts(byId(render(),'create-timezone')),/Asia\/Bishkek/);
   const submit = byId(render(),'create-submit').props.onPress;
-  submit(); submit(); assert.equal(sent.length,1); assert.equal(sent[0].venueName,null); assert.equal(sent[0].category,'GAMING');
+  submit(); submit(); assert.equal(sent.length,1); assert.equal(sent[0].venueName,null); assert.equal(Object.hasOwn(sent[0], 'category'),false);
   assert.equal(byId(render(),'create-submit').props.disabled,true);
   pending.reject(new Error('lost response')); await flush();
   assert.equal(byId(render(),'create-title').props.value,'My title'); assert.ok(byId(render(),'create-error'));
-  pending = deferred(); byId(render(),'create-submit').props.onPress(); pending.resolve(lobby); await flush();
+  pending = deferred(); byId(render(),'create-submit').props.onPress(); pending.resolve({ ...lobby, category: null }); await flush();
   assert.deepEqual(created,[lobby.id]); h.unmount();
 });
 

@@ -18,7 +18,7 @@ export class LobbyHistoryItemDto {
   @ApiProperty({ format: 'uuid' }) id!: string;
   @ApiProperty() title!: string;
   @ApiProperty() description!: string;
-  @ApiProperty({ enum: LobbyCategory }) category!: LobbyCategory;
+  @ApiProperty({ enum: LobbyCategory, nullable: true }) category!: LobbyCategory | null;
   @ApiProperty({ format: 'date-time' }) startsAt!: string;
   @ApiProperty() timeZone!: string;
   @ApiProperty() isOnline!: boolean;

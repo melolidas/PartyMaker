@@ -123,7 +123,7 @@ model Lobby {
   organizerId     String         @map("organizer_id") @db.Uuid
   title           String         @db.VarChar(40)
   description     String         @db.VarChar(200)
-  category        LobbyCategory
+  category        LobbyCategory?
   status          LobbyStatus    @default(PUBLISHED)
   isOnline        Boolean        @default(false) @map("is_online")
   venueName       String?        @map("venue_name") @db.VarChar(140)

@@ -17,12 +17,12 @@ const categories: Record<LobbyCategory, { label: TranslationKey; icon: keyof typ
   OUTDOORS: { label: 'category.outdoors', icon: 'map' },
 };
 
-export function LobbyCategoryPlaceholder({ category, compact = false }: { category: LobbyCategory; compact?: boolean }) {
+export function LobbyCategoryPlaceholder({ category, compact = false }: { category: LobbyCategory | null; compact?: boolean }) {
   const { t } = useI18n();
-  const info = categories[category];
+  const info = category === null ? null : categories[category];
   return <View testID="lobby-category-placeholder" style={[styles.placeholder, compact && styles.compactPlaceholder]}>
-    <Feather name={info.icon} color={colors.muted} size={26} />
-    <Text style={styles.category}>{t(info.label)}</Text>
+    <Feather name={info?.icon ?? 'users'} color={colors.muted} size={26} />
+    {info ? <Text style={styles.category}>{t(info.label)}</Text> : null}
   </View>;
 }
 

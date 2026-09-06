@@ -4,16 +4,9 @@ import { Feather } from '@expo/vector-icons';
 import { useAuth } from '../auth/AuthProvider';
 import { IconButton } from '../components/Primitives';
 import { Screen } from '../components/Screen';
-import { CREATE_LOBBY_TIME_ZONE, CreateLobbyFormStore, emptyLobbyForm, LOBBY_CATEGORIES } from '../features/home/createLobbyForm';
+import { CREATE_LOBBY_TIME_ZONE, CreateLobbyFormStore, emptyLobbyForm } from '../features/home/createLobbyForm';
 import { useI18n } from '../i18n/LocalizationProvider';
-import type { TranslationKey } from '../i18n/translations';
-import type { LobbyCategory } from '../api/lobbyTypes';
 import { colors, radius } from '../theme';
-
-const categoryLabels: Record<LobbyCategory, TranslationKey> = {
-  DRINKS: 'category.drinks', GAMING: 'category.gaming', FOOD: 'category.food',
-  SPORT: 'category.sport', MOVIES: 'category.movies', OUTDOORS: 'category.outdoors',
-};
 
 export function CreateLobbyScreen({ onClose, onCreated }: { onClose: () => void; onCreated: (id: string) => void }) {
   const { t } = useI18n();
@@ -52,16 +45,6 @@ export function CreateLobbyScreen({ onClose, onCreated }: { onClose: () => void;
         <TextInput testID="create-description" accessibilityLabel={t('create.description')} value={fields.description} editable={editable}
           onChangeText={description => store.update({ description })} multiline style={[styles.input, styles.description]} />
         <Text style={styles.counter}>{Array.from(fields.description.trim()).length}/200</Text>
-      </View>
-      <View style={styles.inputCard}>
-        <Text style={styles.label}>{t('create.category')}</Text>
-        <View style={styles.choices}>
-          {LOBBY_CATEGORIES.map(category => <Pressable key={category} testID={'create-category-' + category}
-            accessibilityRole="radio" accessibilityLabel={t(categoryLabels[category])} accessibilityState={{ checked: fields.category === category, disabled: !editable }}
-            disabled={!editable} onPress={() => store.update({ category })} style={[styles.choice, fields.category === category && styles.selected]}>
-            <Text style={[styles.choiceText, fields.category === category && styles.selectedText]}>{t(categoryLabels[category])}</Text>
-          </Pressable>)}
-        </View>
       </View>
       <View style={styles.inputCard}>
         <Text style={styles.label}>{t('create.format')}</Text>

@@ -252,6 +252,11 @@ test('Swagger documents safe Lobby DTOs, pagination and Bearer protection', asyn
   assert.ok(response.body.paths['/api/v1/lobbies'].post.security);
   assert.ok(response.body.paths['/api/v1/lobbies'].post.responses['201']);
   assert.ok(response.body.components.schemas.CreateLobbyRequestDto.required.includes('venueName'));
+  assert.ok(!response.body.components.schemas.CreateLobbyRequestDto.required.includes('category'));
+  for (const name of ['CreateLobbyRequestDto', 'LobbyResponseDto', 'ChatLobbyDto', 'LobbyHistoryItemDto']) {
+    assert.equal(response.body.components.schemas[name].properties.category.nullable, true);
+    assert.deepEqual(response.body.components.schemas[name].properties.category.enum, ['DRINKS', 'GAMING', 'FOOD', 'SPORT', 'MOVIES', 'OUTDOORS']);
+  }
 });
 
 const createInput = (): CreateLobbyRequestDto => ({
@@ -312,7 +317,7 @@ test('creation rejects empty/long/non-string fields, invalid category and out-of
   for (const invalid of [
     { title: '' }, { title: '   ' }, { title: 'x'.repeat(41) }, { title: null }, { title: 5 },
     { description: '' }, { description: ' \n ' }, { description: 'x'.repeat(201) }, { description: null },
-    { category: 'pizza' }, { category: null }, { capacity: 1 }, { capacity: 0 }, { capacity: -2 },
+    ...['pizza', '', 'food', 1, false, [], {}].map(category => ({ category })), { capacity: 1 }, { capacity: 0 }, { capacity: -2 },
     { capacity: 2.5 }, { capacity: 2147483648 }, { capacity: '6' }, { capacity: null },
   ]) {
     const response = await post({ ...createInput(), ...invalid }).expect(400);
@@ -360,4 +365,49 @@ test('clients cannot supply organizer, status, members or other internal fields'
   const missing = createInput() as Partial<CreateLobbyRequestDto>;
   delete missing.title;
   await post(missing).expect(400);
+});
+
+test('creation stores omitted and explicit null categories without a default, while preserving legacy enum values', async () => {
+  const legacyBefore = await prisma.lobby.findMany({ where: { id: { in: ids } }, orderBy: { id: 'asc' }, select: { id: true, category: true } });
+  for (const category of [undefined, null, 'DRINKS', 'GAMING', 'FOOD', 'SPORT', 'MOVIES', 'OUTDOORS'] as const) {
+    const input = createInput(); delete input.category;
+    const response = await post({ ...input, ...(category === undefined ? {} : { category }) }).expect(201);
+    const dto = response.body as LobbyResponseDto;
+    assert.equal(dto.category, category ?? null);
+    const stored = await prisma.lobby.findUniqueOrThrow({ where: { id: dto.id }, include: { members: true } });
+    assert.equal(stored.category, category ?? null);
+    assert.equal(stored.organizerId, users[0]); assert.equal(stored.status, 'PUBLISHED');
+    assert.equal(stored.members.length, 1); assert.equal(stored.members[0]!.status, 'JOINED');
+    assert.equal(stored.members[0]!.role, 'ORGANIZER'); assert.equal(stored.members[0]!.userId, users[0]);
+  }
+  assert.deepEqual(await prisma.lobby.findMany({ where: { id: { in: ids } }, orderBy: { id: 'asc' }, select: { id: true, category: true } }), legacyBefore);
+});
+
+test('uncategorized lobbies round-trip through catalog, mine, search, details, inbox, editing and own history', async () => {
+  const input = createInput(); delete input.category;
+  const dto = (await post({ ...input, startsAt: '9000-01-01T12:00:00.000Z' }).expect(201)).body as LobbyResponseDto;
+  const get = (path: string) => request(app.getHttpServer()).get(`/api/v1/${path}`).auth(access, { type: 'bearer' });
+  assert.deepEqual((await get(`lobbies/${dto.id}`).expect(200)).body, dto);
+  const after = Buffer.from(JSON.stringify({ startsAt: '9000-01-01T11:59:59.999Z', id: randomUUID() })).toString('base64url');
+  for (const scope of ['all', 'mine']) {
+    const rows = (await get('lobbies').query({ scope, after, limit: 50 }).expect(200)).body.items as LobbyResponseDto[];
+    assert.deepEqual(rows.find(row => row.id === dto.id), dto);
+    const searched = (await get('lobbies').query({ scope, q: dto.title }).expect(200)).body.items as LobbyResponseDto[];
+    assert.deepEqual(searched.find(row => row.id === dto.id), dto);
+  }
+  const inbox = (await get('chats').query({ limit: 50 }).expect(200)).body.items as { lobby: { id: string; title: string; category: string | null } }[];
+  assert.deepEqual(inbox.find(row => row.lobby.id === dto.id)?.lobby, { id: dto.id, title: dto.title, category: null });
+  const changed = await request(app.getHttpServer()).patch(`/api/v1/lobbies/${dto.id}`).auth(access, { type: 'bearer' }).send({ description: 'Edited without a category' }).expect(200);
+  assert.equal(changed.body.category, null); assert.equal(changed.body.description, 'Edited without a category');
+  const beforeRejected = await prisma.lobby.findUniqueOrThrow({ where: { id: dto.id } });
+  const rejected = await request(app.getHttpServer()).patch(`/api/v1/lobbies/${dto.id}`).auth(access, { type: 'bearer' }).send({ category: null }).expect(400);
+  assert.equal(rejected.body.error.code, 'VALIDATION_FAILED');
+  assert.deepEqual(await prisma.lobby.findUniqueOrThrow({ where: { id: dto.id } }), beforeRejected);
+  // Change only this returned fixture's schedule/status to exercise existing history policy.
+  await prisma.lobby.update({ where: { id: dto.id }, data: { startsAt: '2001-01-01T12:00:00.000Z', status: 'COMPLETED' } });
+  const history = (await get('users/me/lobby-history').expect(200)).body.items as { id: string; category: string | null }[];
+  const historical = history.find(row => row.id === dto.id);
+  assert.ok(historical); assert.equal(historical.category, null);
+  assert.deepEqual(Object.keys(historical).sort(), ['category', 'description', 'id', 'isOnline', 'isOrganizer', 'startsAt', 'timeZone', 'title', 'venueName']);
+  for (const suffix of ['', '/messages', '/members']) await get(`lobbies/${dto.id}${suffix}`).expect(404);
 });

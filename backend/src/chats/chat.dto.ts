@@ -14,7 +14,7 @@ export class ListChatsQueryDto {
 export class ChatLobbyDto {
   @ApiProperty({ format: 'uuid' }) id!: string;
   @ApiProperty() title!: string;
-  @ApiProperty({ enum: LobbyCategory }) category!: LobbyCategory;
+  @ApiProperty({ enum: LobbyCategory, nullable: true }) category!: LobbyCategory | null;
 }
 export class ChatAuthorDto {
   @ApiProperty({ format: 'uuid' }) id!: string;

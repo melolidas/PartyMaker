@@ -492,6 +492,49 @@ test('AuthProvider never applies avatar results from a closed screen, logout or 
   }
 });
 
+test('AuthProvider publishes manual image retry for the same avatar id without reverting independent profile fields', async () => {
+  const avatar = { id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', width: 512, height: 512, mimeType: 'image/jpeg' };
+  let failRead = false, reads = 0;
+  const h = createAuthScreenHarness({ async get() { return null; }, async set() {}, async clear() {} }, async (url, init) => {
+    if (url.endsWith('/auth/login')) return jsonResponse(200, authResponse('access', 'refresh', { ...profile, avatar }));
+    if (init.method === 'PATCH') return jsonResponse(200, { ...profile, displayName: 'New name', avatar });
+    if (init.method === 'PUT') return jsonResponse(200, { ...profile, extroversionLevel: 8, avatar });
+    reads++; if (failRead) throw Error('offline');
+    return jsonResponse(200, { ...profile, avatar });
+  });
+  h.render(); await drainMicrotasks(120); h.render(); await h.auth().login({}); h.render();
+  await h.auth().updateProfile({ displayName: 'New name' }); h.render(); await h.auth().updateExtroversion(8); h.render();
+  assert.equal(h.auth().avatarReloadKey, '');
+  await h.auth().refreshAvatar(() => true); h.render(); const first = h.auth().avatarReloadKey;
+  assert.ok(first); assert.equal(h.auth().user.avatar.id, avatar.id);
+  assert.equal(h.auth().user.displayName, 'New name'); assert.equal(h.auth().user.extroversionLevel, 8);
+  await h.auth().refreshAvatar(() => true); h.render(); const second = h.auth().avatarReloadKey;
+  assert.notEqual(second, first); failRead = true;
+  await assert.rejects(h.auth().refreshAvatar(() => true)); h.render(); assert.equal(h.auth().avatarReloadKey, second);
+  await drainMicrotasks(120); assert.equal(reads, 3, 'No automatic retry after a failed read');
+});
+
+test('late manual avatar reads cannot send retry signals into a closed screen or newer account/session', async () => {
+  const avatar = { id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', width: 512, height: 512, mimeType: 'image/jpeg' };
+  for (const transition of ['close', 'logout', 'account', 'same-account-login']) {
+    const late = createDeferred(); let current = true, loginCount = 0;
+    const h = createAuthScreenHarness({ async get() { return null; }, async set() {}, async clear() {} }, async url => {
+      if (url.endsWith('/auth/login')) return jsonResponse(200, authResponse('access', 'refresh', { ...profile, avatar,
+        id: ++loginCount > 1 && transition === 'account' ? 'user-b' : profile.id }));
+      if (url.endsWith('/auth/logout')) return noContentResponse();
+      return late.promise;
+    });
+    h.render(); await drainMicrotasks(120); h.render(); await h.auth().login({}); h.render();
+    const result = observe(h.auth().refreshAvatar(() => current)); await drainMicrotasks(20);
+    if (transition === 'close') current = false;
+    else if (transition === 'logout') await h.auth().logout(); else await h.auth().login({});
+    h.render(); late.resolve(jsonResponse(200, { ...profile, avatar })); await result.promise; h.render();
+    assert.equal(h.auth().avatarReloadKey, '');
+    if (transition === 'account') assert.equal(h.auth().user.id, 'user-b');
+    if (transition === 'logout') assert.equal(h.auth().user, null);
+  }
+});
+
 function createClient(fetchImpl, storage, onSessionCleared) {
   return new ApiClient({
     baseUrl: () => 'http://api.test/api/v1',

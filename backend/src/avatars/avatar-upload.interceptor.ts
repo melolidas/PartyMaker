@@ -6,7 +6,9 @@ import { MAX_AVATAR_BYTES } from './avatar-image.service';
 @Injectable()
 export class AvatarUploadInterceptor implements NestInterceptor {
   private readonly parser = new (FileInterceptor('file', {
-    limits: { fileSize: MAX_AVATAR_BYTES, files: 1, fields: 0, parts: 2, fieldNameSize: 32, headerPairs: 32 },
+    // Busboy marks the file truncated on reaching the limit, not only when exceeding it.
+    // One extra transport byte permits exactly MAX; normalize still rejects > MAX.
+    limits: { fileSize: MAX_AVATAR_BYTES + 1, files: 1, fields: 0, parts: 2, fieldNameSize: 32, headerPairs: 32 },
   }))();
 
   async intercept(context: ExecutionContext, next: CallHandler) {

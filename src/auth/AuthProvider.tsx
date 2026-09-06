@@ -35,6 +35,7 @@ type AuthContextValue = {
   uploadAvatar: (input: AvatarUpload, stillCurrent: () => boolean) => Promise<Avatar>;
   refreshAvatar: (stillCurrent: () => boolean) => Promise<Avatar | null>;
   getAvatarUrl: (id: string) => string;
+  avatarReloadKey: string;
   logout: () => Promise<void>;
   storageRecoveryRequired: boolean;
   recoveringSessionStorage: boolean;
@@ -52,6 +53,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const uiAttemptId = useRef(0);
   // Field ownership prevents full DTO responses from reverting independent profile edits.
   const profileWrites = useRef({ avatar: 0, extroversionLevel: 0, displayName: 0, bio: 0, city: 0, countryCode: 0 });
+  const [avatarReload, setAvatarReload] = useState<{ accountId: string; attempt: number; version: number } | null>(null);
+  const avatarReloadKey = avatarReload?.accountId === user?.id && avatarReload?.attempt === uiAttemptId.current
+    ? `${avatarReload.attempt}:${avatarReload.version}` : '';
   const [client] = useState(() => new ApiClient({
     refreshTokenStorage,
     onSessionCleared: ({ storageRecoveryRequired }) => {
@@ -155,6 +159,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const updatedUser = await client.getMe();
     if (attempt === uiAttemptId.current && version === profileWrites.current.avatar && stillCurrent()) {
       setUser(previous => previous?.id === updatedUser.id && attempt === uiAttemptId.current && version === profileWrites.current.avatar && stillCurrent() ? { ...previous, avatar: updatedUser.avatar } : previous);
+      // Only an explicit, still-current refresh retries image loading across all three surfaces.
+      // This is not confirmation of any earlier uncertain upload.
+      setAvatarReload(previous => attempt === uiAttemptId.current && version === profileWrites.current.avatar && stillCurrent()
+        ? { accountId: updatedUser.id, attempt, version: (previous?.accountId === updatedUser.id && previous.attempt === attempt ? previous.version : 0) + 1 }
+        : previous);
     }
     return updatedUser.avatar;
   }, [client]);
@@ -208,6 +217,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     uploadAvatar,
     refreshAvatar,
     getAvatarUrl,
+    avatarReloadKey,
     logout,
     storageRecoveryRequired,
     recoveringSessionStorage,
@@ -223,6 +233,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     uploadAvatar,
     refreshAvatar,
     getAvatarUrl,
+    avatarReloadKey,
     logout,
     storageRecoveryRequired,
     recoveringSessionStorage,

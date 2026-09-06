@@ -40,6 +40,20 @@ When Docker is not available, create the database and user from `.env` in a loca
 
 For an existing Windows cluster, make sure its loopback listener matches the hostname in `DATABASE_URL`. With `localhost`, listen on both `127.0.0.1` and `::1` (for example, start that cluster with PostgreSQL's `-h localhost`). An IPv4-only listener can cause a slow IPv6 fallback and Prisma transaction-acquisition timeouts; this is separate from CORS. Do not reinitialize the cluster or discard its data to fix the listener.
 
+On the current PartyMaker Windows workstation, the existing PG17 cluster is `backend/.local-postgres/data`; its `PG_VERSION` and `postmaster.opts` identify PostgreSQL 17 and `-p 55432 -h localhost`. When that exact cluster is stopped, run from `backend/` (not against another installed PostgreSQL service):
+
+```powershell
+Get-Content .local-postgres/data/PG_VERSION
+Get-Content .local-postgres/data/postmaster.opts
+$partyMakerClusterPath = (Resolve-Path .local-postgres/data).Path
+& 'C:/Program Files/PostgreSQL/17/bin/pg_ctl.exe' status -D $partyMakerClusterPath
+# Only if this confirmed existing cluster is stopped:
+& 'C:/Program Files/PostgreSQL/17/bin/pg_ctl.exe' start -D $partyMakerClusterPath -l .local-postgres/postgres.log -o '-p 55432 -h localhost' -w -t 30
+& 'C:/Program Files/PostgreSQL/17/bin/pg_isready.exe' -h localhost -p 55432
+```
+
+Verify the connection from the unchanged `.env`: `current_database()` is `partymaker`, `current_setting('data_directory')` is that exact directory, and `inet_server_port()` is 55432. This is a restart of existing data, not provisioning: do not run initdb, reset, reseed, create a substitute DB or change DATABASE_URL to make tests pass. If the identity/path cannot be verified on another workstation, stop and investigate its actual setup instead.
+
 ## Development
 
 ```powershell
@@ -258,6 +272,8 @@ The real paper-plane inbox and LiveLobbyChatScreen share one native Modal and so
 `npm test` includes real PostgreSQL inbox access, past/future membership, empty/deleted history, Unicode preview/privacy, same-timestamp pagination and activity-after-send checks. See the root README for the two-user browser scenario and 75-message scroll/anchor smoke test. Clean up only isolated fixture ids; never reset or reseed the existing database.
 
 ## Profile avatar API
+
+The 5 MiB input boundary is **inclusive**: valid 5,242,879-byte and 5,242,880-byte images pass; 5,242,881 bytes returns `413 AVATAR_TOO_LARGE`. The multipart transport is bounded at `MAX_AVATAR_BYTES + 1`, because its parser rejects on reaching the configured limit. The normalizer still enforces the exact `buffer.length > MAX_AVATAR_BYTES` rejection before decoding. Other multipart/format/pixel/frame/metadata checks are unchanged. Real-DB HTTP tests use legal JPEG APP15 padding and verify normalized output, not just a direct validator call.
 
 `POST /api/v1/users/me/avatar` requires Bearer and exactly one multipart file named `file`. Body/query fields (including ownerId, userId, mediaId and storageKey) are forbidden. The authenticated user is always the owner. Success is **200** `{ "avatar": { "id": "<uuid>", "width": 512, "height": 512, "mimeType": "image/jpeg" } }`. The common UserProfile mapper returns the same nullable `avatar` in GET/PATCH `/users/me`, extroversion update, login, register and refresh. Internal keys, paths, original filenames and private fields are never projected.
 

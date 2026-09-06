@@ -14,6 +14,7 @@ import { AppModule } from '../src/app.module';
 import { configureApp, configureSwagger } from '../src/bootstrap';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { AVATAR_DIRECTORY, AvatarFiles } from '../src/avatars/avatar-files.service';
+import { MAX_AVATAR_BYTES } from '../src/avatars/avatar-image.service';
 
 let app: INestApplication, prisma: PrismaService, directory: string, jpeg: Buffer, png: Buffer;
 const accounts: { id: string; access: string; refresh: string; email: string; password: string }[] = [];
@@ -47,6 +48,23 @@ const get = (path: string, who = 0) => request(app.getHttpServer()).get(`/api/v1
 const media = (id: string) => request(app.getHttpServer()).get(`/api/v1/media/avatars/${id}`);
 const file = (req: ReturnType<typeof upload>, buffer = jpeg, contentType = 'image/jpeg') => req.attach('file', buffer, { filename: '../../original.secret', contentType });
 const current = (who = 0) => prisma.user.findUniqueOrThrow({ where: { id: accounts[who]!.id }, include: { avatar: true } });
+
+// Valid JPEG APP15 segments, not garbage appended after EOI: exercise complete HTTP decoding.
+function jpegAtSize(size: number): Buffer {
+  let remaining = size - jpeg.length;
+  const segments = [jpeg.subarray(0, 2)];
+  while (remaining) {
+    let length = Math.min(65530, remaining);
+    if (remaining > length && remaining - length < 4) length -= 4;
+    assert.ok(length >= 4);
+    const segment = Buffer.alloc(length);
+    segment[0] = 0xff; segment[1] = 0xef; segment.writeUInt16BE(length - 2, 2);
+    segments.push(segment); remaining -= length;
+  }
+  const result = Buffer.concat([...segments, jpeg.subarray(2)]);
+  assert.equal(result.length, size);
+  return result;
+}
 
 test('avatar upload requires Bearer and exactly one named multipart file, no body/query identity fields', async () => {
   await file(request(app.getHttpServer()).post('/api/v1/users/me/avatar')).expect(401);
@@ -104,6 +122,26 @@ test('reject MIME mismatch, unsupported/corrupt/animated images and byte/pixel e
   const chunk = Buffer.alloc(20); chunk.writeUInt32BE(8); chunk.write('acTL', 4); chunk.writeUInt32BE(2, 8);
   await file(upload(), Buffer.concat([png.subarray(0, 33), chunk, png.subarray(33)]), 'image/png').expect(415);
   assert.deepEqual(await current(), before);
+});
+
+test('full multipart path accepts valid JPEG at MAX-1 and exactly 5 MiB, rejects MAX+1', async () => {
+  for (const size of [MAX_AVATAR_BYTES - 1, MAX_AVATAR_BYTES, MAX_AVATAR_BYTES + 1]) {
+    const image = jpegAtSize(size);
+    const input = await sharp(image).raw().toBuffer({ resolveWithObject: true });
+    assert.equal(input.info.width, 800); assert.equal(input.info.height, 600);
+    const before = await current();
+    const result = await file(upload(), image).expect(size <= MAX_AVATAR_BYTES ? 200 : 413);
+    if (size > MAX_AVATAR_BYTES) {
+      assert.equal(result.body.error.code, 'AVATAR_TOO_LARGE');
+      assert.deepEqual(await current(), before);
+    } else {
+      assert.equal((await current()).avatarMediaId, result.body.avatar.id);
+      const processed = await media(result.body.avatar.id).expect(200);
+      const meta = await sharp(processed.body as Buffer).metadata();
+      assert.equal(meta.width, 512); assert.equal(meta.height, 512); assert.equal(meta.format, 'jpeg');
+      assert.equal(meta.exif, undefined); assert.equal(meta.icc, undefined);
+    }
+  }
 });
 
 test('disk error and rolled-back DB transaction preserve old profile; prepared file is retained on DB uncertainty', async () => {

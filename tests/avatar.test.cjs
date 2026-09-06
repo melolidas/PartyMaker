@@ -97,11 +97,37 @@ test('late picker, upload and profile read after close/unmount/account switch ca
 });
 
 test('actual avatar image uses configured public URL, neutral missing/error fallback, recovers for a new id',()=>{
-  const h=host({getAvatarUrl:id=>`http://actual-api:9000/api/v1/media/avatars/${id}`});const {AvatarImage}=h.load('src/features/profile/AvatarImage.tsx');
+  const h=host({user:profile,avatarReloadKey:'',getAvatarUrl:id=>`http://actual-api:9000/api/v1/media/avatars/${id}`});const {AvatarImage}=h.load('src/features/profile/AvatarImage.tsx');
   const render=value=>h.render(()=>AvatarImage({avatar:value}));assert.ok(h.find(render(null),'profile-avatar-placeholder'));
   const image=h.find(render(avatar),'profile-avatar-image');assert.equal(image.props.source.uri,`http://actual-api:9000/api/v1/media/avatars/${avatar.id}`);
   image.props.onError();assert.ok(h.find(render(avatar),'profile-avatar-placeholder'));
   assert.ok(h.find(render({...avatar,id:'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'}),'profile-avatar-image'));
+});
+
+test('manual same-id retry reloads profile/editor/nav images; failures never auto-loop or affect another account',async()=>{
+  const auth={user:{...profile,avatar},avatarReloadKey:'',getAvatarUrl:id=>`http://api.test/api/v1/media/avatars/${id}`};
+  // Three actual independent AvatarImage instances, just as Profile, editor and BottomNav mount them.
+  const surfaces=[94,64,28].map(size=>{const h=host(auth);const {AvatarImage}=h.load('src/features/profile/AvatarImage.tsx');return{...h,render:()=>h.render(()=>AvatarImage({avatar:auth.user.avatar,size}))}});
+  const failedCallbacks=surfaces.map(h=>h.find(h.render(),'profile-avatar-image').props.onError);
+  failedCallbacks.forEach(fn=>fn());
+  for(const h of surfaces)for(let i=0;i<3;i++)assert.ok(h.find(h.render(),'profile-avatar-placeholder'));
+  // The real editor's manual GET succeeds with the same id and broadcasts one new attempt.
+  const h=editor({user:auth.user,refreshAvatar:async valid=>{if(valid())auth.avatarReloadKey='1:1';return avatar}});
+  h.find(h.render(),'avatar-refresh').props.onPress();await flush();
+  assert.ok(h.find(h.render(),'avatar-checked'));assert.equal(h.find(h.render(),'avatar-saved'),undefined);
+  for(const surface of surfaces){
+    const image=surface.find(surface.render(),'profile-avatar-image');assert.equal(image.props.source.uri,`http://api.test/api/v1/media/avatars/${avatar.id}?retry=1%3A1`);
+    image.props.onError();assert.ok(surface.find(surface.render(),'profile-avatar-placeholder'));
+  }
+  // Late errors from the first attempt cannot overwrite the new failure and implicitly retry it.
+  failedCallbacks.forEach(fn=>fn());
+  for(const surface of surfaces)assert.ok(surface.find(surface.render(),'profile-avatar-placeholder'));
+  auth.avatarReloadKey='1:2';
+  const oldErrors=surfaces.map(surface=>surface.find(surface.render(),'profile-avatar-image').props.onError);
+  auth.user={...profile,id:'user-b',avatar};auth.avatarReloadKey='';
+  for(const surface of surfaces)assert.ok(surface.find(surface.render(),'profile-avatar-image'));
+  oldErrors.forEach(fn=>fn());
+  for(const surface of surfaces)assert.ok(surface.find(surface.render(),'profile-avatar-image'));
 });
 
 test('actual Profile exposes the separate avatar editor with real identity and keeps gallery demo-labelled',()=>{

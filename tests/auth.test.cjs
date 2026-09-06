@@ -492,6 +492,53 @@ test('AuthProvider never applies avatar results from a closed screen, logout or 
   }
 });
 
+test('AuthProvider removal owns only avatar and invalidates earlier avatar read/upload without reverting independent edits', async () => {
+  const avatar = { id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', width: 512, height: 512, mimeType: 'image/jpeg' };
+  for (const earlier of ['read', 'upload']) {
+    const old = createDeferred(), text = createDeferred(), remove = createDeferred();
+    const h = createAuthScreenHarness({ async get() { return null; }, async set() {}, async clear() {} }, async (url, init) => {
+      if (url.endsWith('/auth/login')) return jsonResponse(200, authResponse('access', 'refresh', { ...profile, avatar }));
+      if (init.method === 'DELETE') return remove.promise;
+      if (init.method === 'PATCH') return text.promise;
+      if (init.method === 'PUT') return jsonResponse(200, { ...profile, avatar, extroversionLevel: 9 });
+      return old.promise;
+    });
+    h.render(); await drainMicrotasks(120); h.render(); await h.auth().login({}); h.render();
+    const outdated = earlier === 'read' ? h.auth().refreshAvatar(() => true) : h.auth().uploadAvatar({ uri: 'file', mimeType: 'image/jpeg', file: new Blob(['fixture']) }, () => true);
+    const editing = h.auth().updateProfile({ displayName: 'Current name', bio: 'Current bio' });
+    const removing = h.auth().removeAvatar(avatar.id, () => true);
+    await h.auth().updateExtroversion(9); remove.resolve(jsonResponse(200, { avatar: null })); assert.equal(await removing, true); h.render();
+    assert.equal(h.auth().user.avatar, null);
+    old.resolve(jsonResponse(200, earlier === 'read' ? { ...profile, avatar } : { avatar })); await outdated;
+    text.resolve(jsonResponse(200, { ...profile, avatar, displayName: 'Current name', bio: 'Current bio' })); await editing; h.render();
+    assert.equal(h.auth().user.avatar, null); assert.equal(h.auth().user.displayName, 'Current name'); assert.equal(h.auth().user.bio, 'Current bio'); assert.equal(h.auth().user.extroversionLevel, 9);
+  }
+});
+
+test('AuthProvider suppresses stale removal success and error after newer avatar action, closed editor or session change', async () => {
+  const avatar = { id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', width: 512, height: 512, mimeType: 'image/jpeg' };
+  const next = { ...avatar, id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb' };
+  for (const transition of ['upload', 'read', 'close', 'logout', 'account']) for (const fails of [false, true]) {
+    const late = createDeferred(); let valid = true, logins = 0;
+    const h = createAuthScreenHarness({ async get() { return null; }, async set() {}, async clear() {} }, async (url, init) => {
+      if (url.endsWith('/auth/login')) return jsonResponse(200, authResponse('access', 'refresh', { ...profile, avatar: ++logins === 1 ? avatar : next, id: logins === 1 ? profile.id : 'B' }));
+      if (url.endsWith('/auth/logout')) return noContentResponse();
+      if (init.method === 'DELETE') return late.promise;
+      return jsonResponse(200, url.endsWith('/avatar') ? { avatar: next } : { ...profile, avatar: next });
+    });
+    h.render(); await drainMicrotasks(120); h.render(); await h.auth().login({}); h.render();
+    const removing = h.auth().removeAvatar(avatar.id, () => valid); await drainMicrotasks(30);
+    if (transition === 'upload') await h.auth().uploadAvatar({ uri: 'file', mimeType: 'image/jpeg', file: new Blob(['fixture']) }, () => true);
+    else if (transition === 'read') await h.auth().refreshAvatar(() => true);
+    else if (transition === 'close') valid = false;
+    else if (transition === 'logout') await h.auth().logout();
+    else await h.auth().login({});
+    h.render(); const before = h.auth().user;
+    if (fails) late.reject(Error('lost response')); else late.resolve(jsonResponse(200, { avatar: null }));
+    assert.equal(await removing, false); h.render(); assert.deepEqual(h.auth().user, before);
+  }
+});
+
 test('AuthProvider publishes manual image retry for the same avatar id without reverting independent profile fields', async () => {
   const avatar = { id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', width: 512, height: 512, mimeType: 'image/jpeg' };
   let failRead = false, reads = 0;

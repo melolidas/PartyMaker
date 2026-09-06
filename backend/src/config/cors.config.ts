@@ -24,7 +24,7 @@ export function createCorsOptions(value: string): CorsOptions {
     origin: (origin, callback) => {
       callback(null, origin !== undefined && allowedOrigins.has(origin));
     },
-    methods: ['GET', 'POST', 'PATCH', 'PUT', 'OPTIONS'],
+    methods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Authorization', 'Content-Type'],
     credentials: false,
     optionsSuccessStatus: 204,

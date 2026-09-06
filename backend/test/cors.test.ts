@@ -70,16 +70,16 @@ after(async () => {
 });
 
 test('allowed preflights support all used methods and Bearer/JSON headers without cookies', async () => {
-  for (const method of ['GET', 'POST', 'PATCH', 'PUT', 'OPTIONS']) {
+  for (const method of ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS']) {
     const response = await request(app.getHttpServer())
-      .options('/api/v1/users/me')
+      .options(method === 'DELETE' ? '/api/v1/users/me/avatar/00000000-0000-4000-8000-000000000000' : '/api/v1/users/me')
       .set('Origin', origin)
       .set('Access-Control-Request-Method', method)
       .set('Access-Control-Request-Headers', 'authorization,content-type')
       .expect(204);
     assert.equal(response.headers['access-control-allow-origin'], origin);
     assert.deepEqual((response.headers['access-control-allow-methods'] ?? '').split(','), [
-      'GET', 'POST', 'PATCH', 'PUT', 'OPTIONS',
+      'GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS',
     ]);
     assert.deepEqual((response.headers['access-control-allow-headers'] ?? '').toLowerCase().split(','), [
       'authorization', 'content-type',
@@ -109,7 +109,7 @@ test('unlisted origins, ports, schemes, lookalikes and null receive no CORS perm
       .get('/api/v1/probe').set('Origin', denied);
     const preflight = await request(app.getHttpServer())
       .options('/api/v1/users/me').set('Origin', denied)
-      .set('Access-Control-Request-Method', 'PATCH');
+      .set('Access-Control-Request-Method', 'DELETE');
     for (const result of [response, preflight]) {
       assert.equal(result.headers['access-control-allow-origin'], undefined);
       assert.equal(result.headers['access-control-allow-credentials'], undefined);

@@ -1,10 +1,10 @@
-import { Inject, Injectable, NotFoundException, ServiceUnavailableException, UnauthorizedException } from '@nestjs/common';
+import { ConflictException, Inject, Injectable, NotFoundException, ServiceUnavailableException, UnauthorizedException } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { AvatarFiles } from './avatar-files.service';
 import { AvatarImage } from './avatar-image.service';
 import { avatarSelect, toAvatar } from './avatar-record';
-import type { AvatarResponseDto } from './avatar.dto';
+import type { AvatarResponseDto, RemovedAvatarResponseDto } from './avatar.dto';
 
 @Injectable()
 export class AvatarsService {
@@ -28,6 +28,19 @@ export class AvatarsService {
         mimeType: 'image/jpeg', width: 512, height: 512, bytes: bytes.length } });
       await tx.user.update({ where: { id: userId }, data: { avatarMediaId: id } });
       return { avatar: { id, width: 512, height: 512, mimeType: 'image/jpeg' as const } };
+    }, { isolationLevel: 'ReadCommitted' });
+  }
+
+  async remove(userId: string, avatarId: string): Promise<RemovedAvatarResponseDto> {
+    return this.prisma.$transaction(async tx => {
+      // Same lock as replace: recheck the condition AFTER the preceding writer.
+      await tx.$queryRaw`SELECT id FROM "User" WHERE id = ${userId}::uuid FOR UPDATE`;
+      const user = await tx.user.findUnique({ where: { id: userId }, select: { avatarMediaId: true } });
+      if (!user) throw new UnauthorizedException({ code: 'INVALID_ACCESS_TOKEN', message: 'A valid access token is required' });
+      if (user.avatarMediaId === null) return { avatar: null }; // No UPDATE, including updatedAt.
+      if (user.avatarMediaId !== avatarId.toLowerCase()) throw new ConflictException({ code: 'AVATAR_CHANGED', message: 'The profile avatar has changed; reload your profile' });
+      await tx.user.update({ where: { id: userId }, data: { avatarMediaId: null } });
+      return { avatar: null };
     }, { isolationLevel: 'ReadCommitted' });
   }
 

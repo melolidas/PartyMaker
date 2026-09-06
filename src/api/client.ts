@@ -42,7 +42,7 @@ type ApiClientOptions = {
 };
 
 type RequestOptions = {
-  method: 'GET' | 'POST' | 'PATCH' | 'PUT';
+  method: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE';
   body?: unknown;
   // Rebuild for every actual fetch, including the existing single auth rejection retry.
   formData?: () => FormData;
@@ -304,6 +304,14 @@ export class ApiClient {
       throw new ApiClientError({ code: 'INVALID_API_RESPONSE', statusCode: 0, message: 'Avatar replacement is unconfirmed' });
     }
     return avatar;
+  }
+
+  async removeAvatar(avatarId: string): Promise<void> {
+    const result = await this.protectedRequest<unknown>(`/users/me/avatar/${encodeURIComponent(avatarId)}`, { method: 'DELETE' });
+    if (!result || typeof result !== 'object' || Array.isArray(result)
+      || Object.keys(result).join(',') !== 'avatar' || (result as { avatar: unknown }).avatar !== null) {
+      throw new ApiClientError({ code: 'INVALID_API_RESPONSE', statusCode: 0, message: 'Avatar removal is unconfirmed' });
+    }
   }
 
   updateExtroversion(level: number): Promise<UserProfile> {

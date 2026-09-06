@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useSyncExternalStore } from 'react';
+import { useEffect, useMemo, useRef, useSyncExternalStore } from 'react';
 import { ActivityIndicator, Image, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { useAuthenticatedAuth } from '../../auth/AuthProvider';
@@ -8,22 +8,27 @@ import { AvatarEditorStore } from './avatarEditorState';
 import { AvatarImage } from './AvatarImage';
 
 export function AvatarEditor({ onClose }: { onClose: () => void }) {
-  const { user, storageRecoveryRequired, uploadAvatar, refreshAvatar } = useAuthenticatedAuth();
+  const { user, storageRecoveryRequired, uploadAvatar, refreshAvatar, removeAvatar } = useAuthenticatedAuth();
   const { t } = useI18n();
   const account = storageRecoveryRequired ? null : user.id;
   const store = useMemo(() => new AvatarEditorStore({
-    upload: uploadAvatar, refresh: refreshAvatar,
+    upload: uploadAvatar, refresh: refreshAvatar, remove: removeAvatar,
     pick: async () => {
       // Called directly from a user gesture on web. No camera/microphone or broad library scan.
       const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], allowsMultipleSelection: false,
         allowsEditing: false, quality: 1, exif: false, base64: false });
       return result.canceled ? null : result.assets[0] ?? null;
     },
-  }), [uploadAvatar, refreshAvatar]);
+  }), [uploadAvatar, refreshAvatar, removeAvatar]);
   const state = useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot);
   useEffect(() => { store.setContext(account); return () => store.setContext(null); }, [store, account]);
   const current = state.account === account && !!account;
-  const close = () => { store.setContext(null); onClose(); };
+  const activeAccount = useRef(account); activeAccount.current = account;
+  const activeAvatar = useRef(user.avatar?.id); activeAvatar.current = user.avatar?.id;
+  const valid = () => !!account && account === activeAccount.current && store.getSnapshot().account === account;
+  const close = () => { if (valid()) { store.setContext(null); onClose(); } };
+  const locked = !!state.busy || state.removal?.phase === 'confirm';
+  const target = state.removal;
   return <Modal visible transparent animationType="fade" onRequestClose={close}>
     <View style={styles.overlay}><View style={styles.sheet}>
       <View style={styles.header}><Text style={styles.title}>{t('avatar.change')}</Text><Pressable testID="avatar-close" accessibilityRole="button" onPress={close}><Text style={styles.text}>{t('common.close')}</Text></Pressable></View>
@@ -32,12 +37,23 @@ export function AvatarEditor({ onClose }: { onClose: () => void }) {
         <Text style={styles.muted}>{t('avatar.requirements')}</Text>
         {current ? <View style={styles.confirmed}><Text style={styles.muted}>{t('avatar.current')}</Text><AvatarImage avatar={user.avatar} size={64} /></View> : null}
         {current && state.draft ? <Image testID="avatar-preview" source={{ uri: state.draft.uri }} style={styles.preview} accessibilityLabel={t('avatar.preview')} /> : null}
-        <Pressable testID="avatar-pick" accessibilityRole="button" disabled={!current || !!state.busy} onPress={() => void store.choose()} style={styles.button}><Text style={styles.text}>{t('avatar.choose')}</Text></Pressable>
+        <Pressable testID="avatar-pick" accessibilityRole="button" disabled={!current || locked} onPress={() => { if (valid()) void store.choose(); }} style={styles.button}><Text style={styles.text}>{t('avatar.choose')}</Text></Pressable>
         {current && state.draft ? <>
-          <Pressable testID="avatar-upload" accessibilityRole="button" disabled={!!state.busy} onPress={() => void store.upload()} style={styles.button}><Text style={styles.text}>{t(state.uncertain ? 'avatar.retry' : 'avatar.upload')}</Text></Pressable>
-          <Pressable testID="avatar-discard" accessibilityRole="button" disabled={!!state.busy} onPress={store.discard} style={styles.button}><Text style={styles.text}>{t('common.cancel')}</Text></Pressable>
+          <Pressable testID="avatar-upload" accessibilityRole="button" disabled={locked} onPress={() => { if (valid()) void store.upload(); }} style={styles.button}><Text style={styles.text}>{t(state.uncertain ? 'avatar.retry' : 'avatar.upload')}</Text></Pressable>
+          <Pressable testID="avatar-discard" accessibilityRole="button" disabled={locked} onPress={() => { if (valid()) store.discard(); }} style={styles.button}><Text style={styles.text}>{t('common.cancel')}</Text></Pressable>
         </> : null}
-        <Pressable testID="avatar-refresh" accessibilityRole="button" disabled={!current || !!state.busy} onPress={() => void store.refresh()} style={styles.button}><Text style={styles.text}>{t('avatar.refresh')}</Text></Pressable>
+        <Pressable testID="avatar-refresh" accessibilityRole="button" disabled={!current || locked} onPress={() => { if (valid()) void store.refresh(); }} style={styles.button}><Text style={styles.text}>{t('avatar.refresh')}</Text></Pressable>
+        {current && user.avatar ? <Pressable testID="avatar-remove" accessibilityRole="button" disabled={locked} style={styles.button}
+          onPress={() => { if (valid() && user.avatar && activeAvatar.current === user.avatar.id) store.requestRemoval(user.avatar.id); }}><Text style={styles.text}>{t('avatar.remove')}</Text></Pressable> : null}
+        {current && target?.phase === 'confirm' ? <View testID="avatar-remove-confirmation" style={styles.content}>
+          <Text style={styles.text}>{t('avatar.removeConfirm')}</Text>
+          <Pressable testID="avatar-keep" accessibilityRole="button" disabled={!!state.busy} style={styles.button} onPress={() => { if (valid()) store.cancelRemoval(target); }}><Text style={styles.text}>{t('avatar.keep')}</Text></Pressable>
+          <Pressable testID="avatar-remove-confirm" accessibilityRole="button" disabled={!!state.busy} style={styles.button} onPress={() => { if (valid()) void store.remove(target); }}><Text style={styles.text}>{t('avatar.remove')}</Text></Pressable>
+        </View> : null}
+        {current && target?.phase === 'retry' ? <Pressable testID="avatar-remove-retry" accessibilityRole="button" disabled={locked} style={styles.button}
+          onPress={() => { if (valid()) void store.remove(target); }}><Text style={styles.text}>{t('avatar.removeRetry')}</Text></Pressable> : null}
+        {current && state.removeError ? <Text testID="avatar-remove-error" accessibilityLiveRegion="polite" style={styles.error}>{t(state.removeError)}</Text> : null}
+        {current && state.removed ? <Text testID="avatar-removed" accessibilityLiveRegion="polite" style={styles.text}>{t('avatar.removed')}</Text> : null}
         {current && state.busy ? <ActivityIndicator testID="avatar-busy" color={colors.text} /> : null}
         {current && state.error ? <Text testID="avatar-error" accessibilityLiveRegion="polite" style={styles.error}>{t(state.error)}</Text> : null}
         {current && state.saved ? <Text testID="avatar-saved" accessibilityLiveRegion="polite" style={styles.text}>{t('avatar.saved')}</Text> : null}

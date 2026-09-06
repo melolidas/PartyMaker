@@ -28,22 +28,23 @@ function host(auth) {
     useSyncExternalStore(_,get){return get()},
   };
   const jsx=(type,props)=>({type,props});
-  function load(file,extra={}) {
+  function load(file,extra={}, expose='') {
     const exports={}, native=Object.fromEntries(['View','Text','Pressable','Image','ScrollView','Modal','ActivityIndicator','TextInput','KeyboardAvoidingView'].map(x=>[x,x]));
     const mocks={react,'react/jsx-runtime':{jsx,jsxs:jsx,Fragment:'Fragment'},'react-native':{...native,StyleSheet:{create:x=>x},useWindowDimensions:()=>({width:400}),AccessibilityInfo:{announceForAccessibility(){}},Alert:{alert(){}},Platform:{OS:'web'}},
       '@expo/vector-icons':{Feather:'Feather'},'../../theme':{colors:{},radius:{}},'../../auth/AuthProvider':{useAuthenticatedAuth:()=>auth},
       '../../i18n/LocalizationProvider':{useI18n:()=>({t:createTranslator('ru')})},'./avatarEditorState':{AvatarEditorStore},'./AvatarImage':{AvatarImage:'AvatarImage'},...extra};
-    vm.runInNewContext(ts.transpileModule(readFileSync(path.join(__dirname,'..',file),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2020,jsx:ts.JsxEmit.ReactJSX}}).outputText,
+    vm.runInNewContext(ts.transpileModule(readFileSync(path.join(__dirname,'..',file),'utf8')+(expose?`\nexports.${expose}=${expose};`:''),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2020,jsx:ts.JsxEmit.ReactJSX}}).outputText,
       {exports,require(n){if(n in mocks)return mocks[n];throw Error('Unexpected dependency '+n)}},{filename:file}); return exports;
   }
   function render(fn){cursor=0;const tree=fn();for(const f of effects.splice(0))f();return tree}
   function find(node,id){if(Array.isArray(node))return node.map(n=>find(n,id)).find(Boolean);if(!node||typeof node!=='object')return;return (typeof id==='function'?id(node):node.props?.testID===id)?node:find(node.props?.children,id)}
   return {load,render,find,unmount(){for(const slot of slots)slot?.cleanup?.()}};
 }
-function editor(actions={}) {
-  const auth={user:{...profile},storageRecoveryRequired:false,uploadAvatar:async()=>avatar,refreshAvatar:async()=>null,...actions};
+function editor(actions={}, language='ru') {
+  const auth={user:{...profile},storageRecoveryRequired:false,uploadAvatar:async()=>avatar,refreshAvatar:async()=>null,removeAvatar:async()=>true,...actions};
   const h=host(auth);let closed=0;
-  const {AvatarEditor}=h.load('src/features/profile/AvatarEditor.tsx',{'expo-image-picker':{launchImageLibraryAsync:actions.pick??(async()=>({canceled:false,assets:[picked]}))}});
+  const {AvatarEditor}=h.load('src/features/profile/AvatarEditor.tsx',{'expo-image-picker':{launchImageLibraryAsync:actions.pick??(async()=>({canceled:false,assets:[picked]}))},
+    '../../i18n/LocalizationProvider':{useI18n:()=>({t:createTranslator(language)})}});
   const render=()=>h.render(()=>AvatarEditor({onClose(){closed++}}));render();
   return {...h,auth,render,closed:()=>closed};
 }
@@ -160,6 +161,7 @@ test('actual Profile exposes the separate avatar editor with real identity and k
   assert.ok(h.find(render(),n=>n.type==='Text'&&n.props.children===createTranslator('ru')('lobbies.demoProfile')));
   h.find(render(),'change-avatar').props.onPress();assert.ok(h.find(render(),n=>n.type==='AvatarEditor'));
   auth.user={...profile,avatar};assert.equal(h.find(render(),n=>n.type==='AvatarImage').props.avatar,avatar);
+  auth.user={...auth.user,avatar:null};assert.equal(h.find(render(),n=>n.type==='AvatarImage').props.avatar,null);
   h.find(render(),n=>n.type==='AvatarEditor').props.onClose();assert.equal(h.find(render(),n=>n.type==='AvatarEditor'),undefined);
 });
 
@@ -199,6 +201,118 @@ test('uncertain upload never auto-retries; invalid receipts fail closed and late
   }
   const late=deferred();const api=client(async(url)=>url.endsWith('/avatar')?late.promise:response(200,authResponse()));
   await api.login({});const pending=api.uploadAvatar(picked);await flush();await api.login({});late.resolve(response(200,{avatar}));await assert.rejects(pending,e=>e.code==='INVALID_REFRESH_TOKEN');
+});
+
+test('conditional DELETE keeps its exact target, validates null-only receipt and uses bounded auth retry',async()=>{
+  for(const outcome of ['ok','expired','network',500,'json',{},[],null,{avatar},{avatar:null,extra:true},401]){
+    let deletes=0,rotations=0;
+    const api=client(async(url,init)=>{
+      if(url.endsWith('/login'))return response(200,authResponse({...profile,avatar}));
+      if(url.endsWith('/refresh')){rotations++;return response(200,{...authResponse(),accessToken:'next'})}
+      assert.equal(new URL(url).pathname,`/api/v1/users/me/avatar/${avatar.id}`);assert.equal(new URL(url).search,'');
+      assert.equal(init.method,'DELETE');assert.equal(init.body,undefined);deletes++;
+      if(outcome==='expired'&&deletes===1||outcome===401)return response(401,{error:{code:'INVALID_ACCESS_TOKEN',message:'expired'}});
+      if(outcome==='network')throw Error('offline');if(outcome===500)return response(500,{error:{code:'INTERNAL_SERVER_ERROR',message:'fixture'}});
+      if(outcome==='json')return new Response('invalid',{status:200});
+      return response(200,outcome==='ok'||outcome==='expired'?{avatar:null}:outcome);
+    });
+    await api.login({});
+    if(outcome==='ok'||outcome==='expired')await api.removeAvatar(avatar.id);else await assert.rejects(api.removeAvatar(avatar.id));
+    assert.equal(deletes,outcome==='expired'||outcome===401?2:1);assert.equal(rotations,outcome==='expired'||outcome===401?1:0);
+  }
+});
+
+test('actual editor removal confirms or declines separately from local draft, with one shared busy gate',async()=>{
+  for(const language of ['ru','en']){
+    const pending=deferred();let sends=0,picks=0,reads=0,uploads=0;
+    const h=editor({user:{...profile,avatar},pick:async()=>{picks++;return{canceled:false,assets:[picked]}},
+      refreshAvatar:async()=>{reads++;return avatar},uploadAvatar:async()=>{uploads++;return avatar},
+      removeAvatar:async(id,current)=>{assert.equal(id,avatar.id);sends++;await pending.promise;if(current())h.auth.user={...h.auth.user,avatar:null};return current()}},language);
+    h.find(h.render(),'avatar-pick').props.onPress();await flush();
+    const pick=h.find(h.render(),'avatar-pick').props.onPress,upload=h.find(h.render(),'avatar-upload').props.onPress,refresh=h.find(h.render(),'avatar-refresh').props.onPress;
+    h.find(h.render(),'avatar-remove').props.onPress();assert.ok(h.find(h.render(),'avatar-remove-confirmation'));assert.equal(sends,0);
+    const oldConfirm=h.find(h.render(),'avatar-remove-confirm').props.onPress;
+    h.find(h.render(),'avatar-keep').props.onPress();oldConfirm();await flush();assert.equal(sends,0);assert.ok(h.find(h.render(),'avatar-preview'));
+    h.find(h.render(),'avatar-remove').props.onPress();oldConfirm();assert.equal(sends,0);
+    const confirm=h.find(h.render(),'avatar-remove-confirm').props.onPress;confirm();confirm();pick();upload();refresh();await flush();
+    assert.equal(sends,1);assert.equal(picks,1);assert.equal(uploads,0);assert.equal(reads,0);assert.equal(h.find(h.render(),'avatar-removed'),undefined);
+    pending.resolve();await flush();assert.equal(h.find(h.render(),n=>n.type==='AvatarImage').props.avatar,null);
+    assert.ok(h.find(h.render(),'avatar-preview'));assert.equal(h.find(h.render(),'avatar-saved'),undefined);
+    assert.equal(h.find(h.render(),'avatar-removed').props.children,createTranslator(language)('avatar.removed'));
+    assert.equal(h.auth.user.displayName,profile.displayName);assert.equal(h.auth.user.extroversionLevel,profile.extroversionLevel);
+    confirm();await flush();assert.equal(sends,1);h.unmount();
+  }
+});
+
+test('uncertain removal retains A through GET null or B; no false receipt, no automatic retarget or retry',async()=>{
+  for(const replaced of [false,true]){
+    const next={...avatar,id:'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'},targets=[];let current=avatar;
+    const h=editor({user:{...profile,avatar},removeAvatar:async id=>{
+      targets.push(id);if(targets.length===1){current=replaced?next:null;throw new ApiClientError({code:'NETWORK_ERROR',statusCode:0,message:'lost'})}
+      if(current&&current.id!==id)throw new ApiClientError({code:'AVATAR_CHANGED',statusCode:409,message:'changed'});
+      current=null;h.auth.user={...h.auth.user,avatar:null};return true;
+    },refreshAvatar:async()=>{h.auth.user={...h.auth.user,avatar:current};return current}});
+    h.find(h.render(),'avatar-remove').props.onPress();h.find(h.render(),'avatar-remove-confirm').props.onPress();await flush();
+    assert.ok(h.find(h.render(),'avatar-remove-error'));assert.equal(h.find(h.render(),'avatar-removed'),undefined);
+    h.find(h.render(),'avatar-refresh').props.onPress();await flush();assert.ok(h.find(h.render(),'avatar-checked'));
+    assert.equal(h.find(h.render(),'avatar-removed'),undefined);assert.equal(targets.length,1);
+    h.find(h.render(),'avatar-remove-retry').props.onPress();await flush();assert.deepEqual(targets,[avatar.id,avatar.id]);
+    if(replaced){
+      assert.equal(h.auth.user.avatar.id,next.id);assert.equal(h.find(h.render(),'avatar-removed'),undefined);assert.equal(h.find(h.render(),'avatar-remove-retry'),undefined);
+      assert.equal(h.find(h.render(),'avatar-remove-error').props.children,createTranslator('ru')('avatar.changed'));
+      h.find(h.render(),'avatar-refresh').props.onPress();await flush();assert.equal(targets.length,2);
+      h.find(h.render(),'avatar-remove').props.onPress();assert.equal(targets.length,2);
+      h.find(h.render(),'avatar-remove-confirm').props.onPress();await flush();assert.equal(targets[2],next.id);
+    }
+    assert.ok(h.find(h.render(),'avatar-removed'));h.unmount();
+  }
+});
+
+test('pick/read/upload synchronously block stale remove confirmation and preserve the frozen target',async()=>{
+  for(const operation of ['pick','upload','read']){
+    const pending=deferred();let removed=0;
+    const store=new AvatarEditorStore({pick:()=>operation==='pick'?pending.promise:Promise.resolve(picked),upload:()=>pending.promise,refresh:()=>pending.promise,remove:async()=>{removed++;return true}});
+    store.setContext('A');if(operation==='upload')await store.choose();
+    const flight=operation==='pick'?store.choose():operation==='upload'?store.upload():store.refresh();
+    store.requestRemoval(avatar.id);assert.equal(store.getSnapshot().removal,null);assert.equal(removed,0);
+    pending.resolve(operation==='pick'?picked:avatar);await flight;
+    store.requestRemoval(avatar.id);const target=store.getSnapshot().removal;store.setContext('B');await store.remove(target);
+    assert.equal(removed,0);assert.equal(store.getSnapshot().removal,null);
+  }
+});
+
+test('late removal success/error and stale UI handlers are ignored after close/reopen/account/recovery/unmount',async()=>{
+  for(const transition of ['close','account','recovery','unmount'])for(const fails of [false,true]){
+    const pending=deferred();let applied=0,calls=0;
+    const h=editor({user:{...profile,avatar},removeAvatar:async(_,valid)=>{calls++;await pending.promise;if(valid())applied++;return valid()}});
+    const oldRemove=h.find(h.render(),'avatar-remove').props.onPress;
+    oldRemove();const confirm=h.find(h.render(),'avatar-remove-confirm').props.onPress;confirm();
+    if(transition==='close')h.find(h.render(),'avatar-close').props.onPress();else if(transition==='unmount')h.unmount();
+    else{if(transition==='account')h.auth.user={...profile,id:'B',avatar};else h.auth.storageRecoveryRequired=true;h.render()}
+    oldRemove();confirm();assert.equal(calls,1);
+    if(fails)pending.reject(Error('late error'));else pending.resolve();await flush();
+    assert.equal(applied,0);assert.equal(h.find(h.render(),'avatar-removed'),undefined);assert.equal(h.find(h.render(),'avatar-remove-error'),undefined);h.unmount();
+    const reopened=editor({user:{...profile,avatar}});assert.equal(reopened.find(reopened.render(),'avatar-remove-retry'),undefined);reopened.unmount();
+  }
+});
+
+test('confirmed removal propagates null to actual editor/nav consumers and all three AvatarImage instances',async()=>{
+  const h=editor({user:{...profile,avatar},removeAvatar:async(_,valid)=>{if(valid())h.auth.user={...h.auth.user,avatar:null};return valid()}});
+  const navHost=host(h.auth),nav=navHost.load('src/components/BottomNav.tsx',{
+    'react-native':{StyleSheet:{create:x=>x},Platform:{select:x=>x.web}},'@expo/vector-icons':{},
+    '../auth/AuthProvider':{useAuthenticatedAuth:()=>h.auth},'../features/profile/AvatarImage':{AvatarImage:'AvatarImage'},
+    '../i18n/LocalizationProvider':{},'../navigation/useNavPulse':{},'../navigation/navMotion':navHost.load('src/navigation/navMotion.ts'),
+    '../theme':{colors:{}},'./GlassNavSurface':{},'./NavPressGlint':{},'./NavActiveIndicator':{},'../features/activity/UnreadNotificationsProvider':{},
+  },'ProfileNavAvatar');
+  h.auth.getAvatarUrl=id=>`http://api.test/api/v1/media/avatars/${id}`;
+  const surfaces=[94,64,28].map(size=>{const s=host(h.auth),{AvatarImage}=s.load('src/features/profile/AvatarImage.tsx');return{...s,render:()=>s.render(()=>AvatarImage({avatar:h.auth.user.avatar,size}))}});
+  for(const s of surfaces)assert.ok(s.find(s.render(),'profile-avatar-image'));
+  assert.equal(navHost.render(nav.ProfileNavAvatar).props.avatar.id,avatar.id);
+  h.find(h.render(),'avatar-remove').props.onPress();h.find(h.render(),'avatar-remove-confirm').props.onPress();await flush();
+  assert.ok(h.find(h.render(),'avatar-removed'));assert.equal(h.find(h.render(),n=>n.type==='AvatarImage').props.avatar,null);
+  assert.equal(navHost.render(nav.ProfileNavAvatar).props.avatar,null);
+  for(const s of surfaces){assert.ok(s.find(s.render(),'profile-avatar-placeholder'));assert.equal(s.find(s.render(),'profile-avatar-image'),undefined);s.unmount()}
+  h.unmount();navHost.unmount();
 });
 
 test('avatar error codes have RU/EN messages; reload error is retryable without changing confirmed state',async()=>{

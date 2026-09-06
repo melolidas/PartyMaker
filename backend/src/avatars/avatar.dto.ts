@@ -10,3 +10,7 @@ export class AvatarDto {
 export class AvatarResponseDto {
   @ApiProperty({ type: AvatarDto }) avatar!: AvatarDto;
 }
+
+export class RemovedAvatarResponseDto {
+  @ApiProperty({ type: 'object', additionalProperties: false, nullable: true, enum: [null], description: 'Confirmed absence of a profile avatar' }) avatar!: null;
+}

@@ -48,6 +48,7 @@ const get = (path: string, who = 0) => request(app.getHttpServer()).get(`/api/v1
 const media = (id: string) => request(app.getHttpServer()).get(`/api/v1/media/avatars/${id}`);
 const file = (req: ReturnType<typeof upload>, buffer = jpeg, contentType = 'image/jpeg') => req.attach('file', buffer, { filename: '../../original.secret', contentType });
 const current = (who = 0) => prisma.user.findUniqueOrThrow({ where: { id: accounts[who]!.id }, include: { avatar: true } });
+const remove = (id: string, who = 0) => request(app.getHttpServer()).delete(`/api/v1/users/me/avatar/${id}`).auth(accounts[who]!.access, { type: 'bearer' });
 
 // Valid JPEG APP15 segments, not garbage appended after EOI: exercise complete HTTP decoding.
 function jpegAtSize(size: number): Buffer {
@@ -221,4 +222,80 @@ test('avatar survives login/refresh/profile/extroversion responses with only saf
   const docs = (await request(app.getHttpServer()).get('/docs-json').expect(200)).body;
   assert.ok(docs.paths['/api/v1/users/me/avatar'].post.security);
   assert.ok(docs.components.schemas.UserResponseDto.properties.avatar.nullable);
+});
+
+test('conditional avatar removal requires Bearer, UUID and no body/query, without touching identity or files', async () => {
+  const id = (await file(upload()).expect(200)).body.avatar.id as string, before = await current();
+  await request(app.getHttpServer()).delete(`/api/v1/users/me/avatar/${id}`).expect(401);
+  assert.equal((await remove('invalid').expect(400)).body.error.code, 'VALIDATION_FAILED');
+  for (const body of [{}, [], { userId: accounts[1]!.id }, { avatar: null }, 'not JSON']) {
+    assert.equal((await remove(id).send(body).expect(400)).body.error.code, 'VALIDATION_FAILED');
+  }
+  for (const query of [{ userId: accounts[1]!.id }, { id }, { ownerId: 'x' }]) await remove(id).query(query).expect(400);
+  assert.deepEqual(await current(), before);
+  const docs = (await request(app.getHttpServer()).get('/docs-json').expect(200)).body;
+  const route = docs.paths['/api/v1/users/me/avatar/{avatarId}'].delete;
+  assert.ok(route.security); assert.ok(route.responses['409']); assert.match(route.description, /User FOR UPDATE/);
+  assert.deepEqual(docs.components.schemas.RemovedAvatarResponseDto.properties.avatar.enum, [null]);
+});
+
+test('remove detaches only own matching avatar, preserves other fields/asset/file and no-op updatedAt', async () => {
+  const id = (await file(upload()).expect(200)).body.avatar.id as string;
+  const before = await current(), asset = await prisma.mediaAsset.findUniqueOrThrow({ where: { id } }), bytes = await readFile(join(directory, `${id}.jpg`));
+  assert.deepEqual((await remove(id.toUpperCase()).expect(200)).body, { avatar: null });
+  const after = await current(); assert.equal(after.avatarMediaId, null); assert.equal(after.avatar, null);
+  assert.deepEqual({ ...after, avatarMediaId: before.avatarMediaId, avatar: before.avatar, updatedAt: before.updatedAt }, before);
+  assert.deepEqual(await prisma.mediaAsset.findUniqueOrThrow({ where: { id } }), asset);
+  assert.deepEqual(await readFile(join(directory, `${id}.jpg`)), bytes);
+  assert.equal((await media(id).expect(404)).body.error.code, 'AVATAR_NOT_FOUND');
+  await remove(id).expect(200); await remove(randomUUID()).expect(200); assert.deepEqual(await current(), after);
+  const login = await request(app.getHttpServer()).post('/api/v1/auth/login').send({ email: accounts[0]!.email, password: accounts[0]!.password }).expect(200);
+  assert.equal(login.body.user.avatar, null); assert.equal((await get('users/me').expect(200)).body.avatar, null);
+});
+
+test('foreign/arbitrary target is only a condition: cannot affect others or remove a newer avatar on old retry', async () => {
+  const a = (await file(upload()).expect(200)).body.avatar.id as string;
+  const foreign = (await file(upload(1)).expect(200)).body.avatar.id as string, other = await current(1), own = await current();
+  for (const id of [foreign, randomUUID()]) {
+    const r = await remove(id).expect(409); assert.equal(r.body.error.code, 'AVATAR_CHANGED');
+    assert.doesNotMatch(JSON.stringify(r.body.error), new RegExp(`${foreign}|${accounts[1]!.id}|storageKey|ownerId`));
+  }
+  assert.deepEqual(await current(), own); assert.deepEqual(await current(1), other);
+  await remove(a).expect(200); // Treat the acknowledgement as lost before replacing A with B.
+  const b = (await file(upload(), png, 'image/png').expect(200)).body.avatar.id as string, newer = await current();
+  assert.equal((await remove(a).expect(409)).body.error.code, 'AVATAR_CHANGED'); assert.deepEqual(await current(), newer);
+  await media(b).expect(200); await media(foreign).expect(200); assert.deepEqual(await current(1), other);
+  await remove(b).expect(200); assert.deepEqual((await remove(foreign).expect(200)).body, { avatar: null });
+  assert.deepEqual(await current(1), other);
+});
+
+test('replace/remove serialize both real overlapping User lock orders; old conditional retry never deletes new B', async () => {
+  for (const removeFirst of [true, false]) {
+    const a = (await file(upload()).expect(200)).body.avatar.id as string;
+    let release!: () => void, held!: () => void;
+    const gate = new Promise<void>(r => { release = r; }), ready = new Promise<void>(r => { held = r; });
+    const blocker = prisma.$transaction(async tx => {
+      await tx.$queryRaw`SELECT id FROM "User" WHERE id = ${accounts[0]!.id}::uuid FOR UPDATE`; held(); await gate;
+    }, { timeout: 15000 });
+    await ready;
+    const calls = [() => remove(a).then(r => r), () => file(upload(), png, 'image/png').then(r => r)];
+    if (!removeFirst) calls.reverse();
+    const pending: Promise<request.Response>[] = [];
+    try {
+      for (const call of calls) {
+        pending.push(call()); const deadline = Date.now() + 4000; let count = 0;
+        while (Date.now() < deadline) {
+          const rows = await prisma.$queryRaw<{ count: number }[]>`SELECT count(*)::int AS count FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND query LIKE '%FROM "User"%FOR UPDATE%'`;
+          count = rows[0]!.count; if (count >= pending.length) break; await setImmediate();
+        }
+        assert.ok(count >= pending.length, 'Both HTTP transactions overlap under PostgreSQL locks');
+      }
+    } finally { release(); await blocker; }
+    const replies = await Promise.all(pending); assert.deepEqual(replies.map(r => r.status), removeFirst ? [200, 200] : [200, 409]);
+    const b = replies[removeFirst ? 1 : 0]!.body.avatar.id as string;
+    const after = await current(); assert.equal(after.avatarMediaId, b);
+    await remove(a).expect(409); assert.deepEqual(await current(), after);
+    assert.ok(await prisma.mediaAsset.findUnique({ where: { id: a } })); assert.ok(await readFile(join(directory, `${a}.jpg`)));
+    await media(a).expect(404); await media(b).expect(200);
+  }
 });

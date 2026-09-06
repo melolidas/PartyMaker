@@ -34,6 +34,7 @@ type AuthContextValue = {
   updateExtroversion: (level: number) => Promise<UserProfile>;
   uploadAvatar: (input: AvatarUpload, stillCurrent: () => boolean) => Promise<Avatar>;
   refreshAvatar: (stillCurrent: () => boolean) => Promise<Avatar | null>;
+  removeAvatar: (avatarId: string, stillCurrent: () => boolean) => Promise<boolean>;
   getAvatarUrl: (id: string) => string;
   avatarReloadKey: string;
   logout: () => Promise<void>;
@@ -167,6 +168,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
     return updatedUser.avatar;
   }, [client]);
+  const removeAvatar = useCallback(async (avatarId: string, stillCurrent: () => boolean) => {
+    const attempt = uiAttemptId.current, version = ++profileWrites.current.avatar;
+    try { await client.removeAvatar(avatarId); }
+    catch (error: unknown) {
+      if (attempt !== uiAttemptId.current || version !== profileWrites.current.avatar || !stillCurrent()) return false;
+      throw error;
+    }
+    if (attempt !== uiAttemptId.current || version !== profileWrites.current.avatar || !stillCurrent()) {
+      return false;
+    }
+    setUser(previous => previous && attempt === uiAttemptId.current && version === profileWrites.current.avatar && stillCurrent() ? { ...previous, avatar: null } : previous);
+    return true;
+  }, [client]);
   const getAvatarUrl = useCallback((id: string) => client.getAvatarUrl(id), [client]);
 
   const logout = useCallback(async () => {
@@ -216,6 +230,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     updateExtroversion,
     uploadAvatar,
     refreshAvatar,
+    removeAvatar,
     getAvatarUrl,
     avatarReloadKey,
     logout,
@@ -232,6 +247,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     updateExtroversion,
     uploadAvatar,
     refreshAvatar,
+    removeAvatar,
     getAvatarUrl,
     avatarReloadKey,
     logout,

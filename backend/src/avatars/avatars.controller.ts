@@ -1,10 +1,10 @@
-import { BadRequestException, Body, Controller, Get, Header, HttpCode, Inject, Param, ParseUUIDPipe, Post, Query, StreamableFile, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
-import { ApiBadRequestResponse, ApiBearerAuth, ApiBody, ApiConsumes, ApiNotFoundResponse, ApiOkResponse, ApiOperation, ApiPayloadTooLargeResponse, ApiProduces, ApiResponse, ApiTags, ApiUnauthorizedResponse, ApiUnsupportedMediaTypeResponse } from '@nestjs/swagger';
+import { BadRequestException, Body, Controller, Delete, Get, Header, Headers, HttpCode, Inject, Param, ParseUUIDPipe, Post, Query, StreamableFile, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
+import { ApiBadRequestResponse, ApiBearerAuth, ApiBody, ApiConflictResponse, ApiConsumes, ApiNotFoundResponse, ApiOkResponse, ApiOperation, ApiPayloadTooLargeResponse, ApiProduces, ApiResponse, ApiTags, ApiUnauthorizedResponse, ApiUnsupportedMediaTypeResponse } from '@nestjs/swagger';
 import { AccessTokenGuard } from '../auth/guards/access-token.guard';
 import { CurrentAuth } from '../auth/decorators/current-auth.decorator';
 import type { AuthContext } from '../auth/types/access-token.types';
 import { ApiErrorResponseDto } from '../common/dto/api-error-response.dto';
-import { AvatarResponseDto } from './avatar.dto';
+import { AvatarResponseDto, RemovedAvatarResponseDto } from './avatar.dto';
 import { AvatarUploadInterceptor } from './avatar-upload.interceptor';
 import { AvatarsService } from './avatars.service';
 
@@ -36,10 +36,28 @@ export class AvatarsController {
     return this.avatars.replace(auth.userId, file);
   }
 
+  @Delete('users/me/avatar/:avatarId')
+  @HttpCode(200)
+  @UseGuards(AccessTokenGuard)
+  @ApiBearerAuth('access-token')
+  @ApiOperation({ summary: 'Conditionally remove your avatar assignment', description: 'No body or query parameters. UUID conditions only the Bearer user profile: matching avatar is detached; already null is a no-op preserving updatedAt; a different assigned avatar returns AVATAR_CHANGED. Serialized with replacement under User FOR UPDATE. No MediaAsset/file deletion or disclosure about the supplied ID. A lost-response retry cannot detach a newer avatar. Downloaded copies and already-started public reads cannot be revoked.' })
+  @ApiOkResponse({ type: RemovedAvatarResponseDto })
+  @ApiBadRequestResponse({ type: ApiErrorResponseDto, description: 'VALIDATION_FAILED: UUID, body or query' })
+  @ApiUnauthorizedResponse({ type: ApiErrorResponseDto })
+  @ApiConflictResponse({ type: ApiErrorResponseDto, description: 'AVATAR_CHANGED: reload the profile; a new target requires a new confirmation' })
+  remove(@CurrentAuth() auth: AuthContext, @Param('avatarId', new ParseUUIDPipe({ exceptionFactory: () => new BadRequestException({ code: 'VALIDATION_FAILED', message: 'A valid avatar UUID is required' }) })) avatarId: string,
+    @Body() body: unknown, @Query() query: Record<string, unknown>,
+    @Headers('content-length') length: string | undefined, @Headers('transfer-encoding') transfer: string | undefined): Promise<RemovedAvatarResponseDto> {
+    if (body !== undefined || (length !== undefined && length !== '0') || transfer !== undefined || Object.keys(query).length) {
+      throw new BadRequestException({ code: 'VALIDATION_FAILED', message: 'This action accepts no body or query parameters' });
+    }
+    return this.avatars.remove(auth.userId, avatarId);
+  }
+
   @Get('media/avatars/:id')
   @Header('X-Content-Type-Options', 'nosniff')
   @Header('Cache-Control', 'no-store')
-  @ApiOperation({ summary: 'Read a currently assigned public processed avatar', description: 'Public, no Bearer required. Only assigned server-processed JPEGs; no static uploads directory, original, demo, temporary, orphan or former avatar access. Downloaded public copies cannot be revoked. An in-flight read may finish across replacement.' })
+  @ApiOperation({ summary: 'Read a currently assigned public processed avatar', description: 'Public, no Bearer required. Only assigned server-processed JPEGs; no static uploads directory, original, demo, temporary, orphan or former avatar access. Downloaded public copies cannot be revoked. An in-flight read may finish across replacement or removal.' })
   @ApiProduces('image/jpeg')
   @ApiOkResponse({ schema: { type: 'string', format: 'binary' } })
   @ApiBadRequestResponse({ type: ApiErrorResponseDto })

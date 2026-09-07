@@ -23,7 +23,19 @@
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
-      "expo-font"
+      "expo-font",
+      [
+        "expo-localization",
+        {
+          "supportedLocales": {
+            "ios": ["en", "ru"],
+            "android": ["en", "ru"]
+          },
+          "supportsRTL": false
+        }
+      ],
+      "expo-secure-store",
+      ["expo-image-picker", { "photosPermission": "Choose a photo for your public PartyMaker avatar.", "cameraPermission": false, "microphonePermission": false }]
     ]
   }
 }

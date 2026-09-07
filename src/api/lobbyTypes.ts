@@ -1,5 +1,6 @@
 import type { Avatar } from './types';
 import type { NotificationsApi } from './notificationTypes';
+import type { LobbyRoleInput, LobbyRolesApi } from './lobbyRoleTypes';
 
 export type LobbyCategory = 'DRINKS' | 'GAMING' | 'FOOD' | 'SPORT' | 'MOVIES' | 'OUTDOORS';
 
@@ -27,7 +28,7 @@ export type LobbyRecommendations = { items: Lobby[] };
 export type LobbyHistoryItem = Pick<Lobby, 'id' | 'title' | 'description' | 'category' | 'startsAt' | 'timeZone' | 'isOnline' | 'venueName' | 'isOrganizer'>;
 export type LobbyHistoryPage = { items: LobbyHistoryItem[]; nextCursor: string | null };
 export type LobbyScope = 'all' | 'mine';
-export type CreateLobbyInput = Pick<Lobby, 'title' | 'description' | 'startsAt' | 'timeZone' | 'capacity' | 'isOnline' | 'venueName'>;
+export type CreateLobbyInput = Pick<Lobby, 'title' | 'description' | 'startsAt' | 'timeZone' | 'capacity' | 'isOnline' | 'venueName'> & { roles?: LobbyRoleInput[] };
 export type UpdateLobbyInput = Partial<Pick<Lobby, 'title' | 'description' | 'capacity'>> & { category?: LobbyCategory } &
   ({ isOnline: boolean; venueName: string | null } | { isOnline?: never; venueName?: never });
 export type LobbyMessage = {
@@ -54,7 +55,7 @@ export type LobbyChatApi = {
   sendLobbyMessage: (id: string, input: SendLobbyMessageInput) => Promise<LobbyMessage>;
 };
 // Lobby-related Activity shares the existing authenticated transport/context.
-export type LobbyApi = LobbyReadApi & LobbyChatApi & NotificationsApi & {
+export type LobbyApi = LobbyReadApi & LobbyChatApi & NotificationsApi & LobbyRolesApi & {
   listLobbyRecommendations: () => Promise<LobbyRecommendations>;
   listLobbyHistory: (after?: string) => Promise<LobbyHistoryPage>;
   updateLobby: (id: string, input: UpdateLobbyInput) => Promise<Lobby>;

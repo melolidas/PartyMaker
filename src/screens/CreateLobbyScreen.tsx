@@ -7,6 +7,7 @@ import { Screen } from '../components/Screen';
 import { CREATE_LOBBY_TIME_ZONE, CreateLobbyFormStore, emptyLobbyForm } from '../features/home/createLobbyForm';
 import { useI18n } from '../i18n/LocalizationProvider';
 import { colors, radius } from '../theme';
+import { DraftLobbyRoles } from '../features/roles/DraftLobbyRoles';
 
 export function CreateLobbyScreen({ onClose, onCreated }: { onClose: () => void; onCreated: (id: string) => void }) {
   const { t } = useI18n();
@@ -77,6 +78,9 @@ export function CreateLobbyScreen({ onClose, onCreated }: { onClose: () => void;
           onChangeText={capacity => store.update({ capacity })} style={styles.input} />
         <Text style={styles.note}>{t('create.organizerPlace')}</Text>
       </View>
+      <DraftLobbyRoles key={account} roles={state.roles} editable={editable}
+        onAdd={(name, description) => store.getSnapshot().account === account && editable && store.addRole(name, description)}
+        onRemove={index => { if (store.getSnapshot().account === account && editable) store.removeRole(index); }} />
       {state.error ? <Text testID="create-error" accessibilityLiveRegion="polite" style={styles.error}>{t(state.error)}</Text> : null}
       <Pressable testID="create-submit" disabled={!editable} accessibilityRole="button" accessibilityState={{ disabled: !editable, busy: submitting }}
         accessibilityLabel={t('nav.create')} onPress={() => void store.submit()} style={[styles.primaryButton, !editable && styles.disabled]}>

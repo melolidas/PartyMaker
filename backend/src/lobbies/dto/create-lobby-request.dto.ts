@@ -1,6 +1,8 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { LobbyCategory } from '@prisma/client';
-import { Transform } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
+import { ArrayMaxSize, IsArray, ValidateIf, ValidateNested } from 'class-validator';
+import { CreateLobbyRoleDto } from './lobby-role.dto';
 import { IsBoolean, IsEnum, IsInt, IsNotEmpty, IsOptional, IsString, IsTimeZone, Matches, Max, MaxLength, Min, Validate, ValidatorConstraint } from 'class-validator';
 import type { ValidationArguments, ValidatorConstraintInterface } from 'class-validator';
 
@@ -29,6 +31,11 @@ export class LobbyVenue implements ValidatorConstraintInterface {
 }
 
 export class CreateLobbyRequestDto {
+  @ApiPropertyOptional({ type: [CreateLobbyRoleDto], maxItems: 20, description: 'Optional duties in creation order; immutable after publication. Omission/[] means no roles.' })
+  @ValidateIf((_o, v: unknown) => v !== undefined)
+  @IsArray() @ArrayMaxSize(20) @ValidateNested({ each: true }) @Type(() => CreateLobbyRoleDto)
+  roles?: CreateLobbyRoleDto[];
+
   @ApiProperty({ minLength: 1, maxLength: 40 })
   @Transform(toTrimmedString) @IsString() @IsNotEmpty() @MaxLength(40)
   title!: string;

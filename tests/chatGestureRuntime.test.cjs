@@ -69,10 +69,11 @@ for (const name of ['chats', 'conversation', 'search', 'your-lobbies']) {
       const swipe = { start() {}, update() {}, end() {}, cancel() {} };
       const edgeOnly = name !== 'chats';
       const backGesture = buildProductionGesture('backGesture', {
-        name, active: true, edgeOnly, scrollGesture, chatPanActivation, swipe,
+        name, active: true, edgeOnly, scrollGesture, chatPanActivation, swipe, backOverride: undefined,
       });
       assert.ok(backGesture instanceof PanGesture);
       assert.equal(backGesture.config.runOnJS, true);
+      assert.equal(backGesture.config.enabled, true);
       assert.equal(backGesture.shouldUseReanimated, false);
       assert.deepEqual(backGesture.config.blocksHandlers, [scrollGesture]);
       assert.equal(backGesture.config.failOffsetYStart, chatPanActivation.failOffsetY[0]);
@@ -87,3 +88,11 @@ for (const name of ['chats', 'conversation', 'search', 'your-lobbies']) {
     });
   });
 }
+
+test('open role popup disables only conversation back pan, preserving its native scroll gesture', () => {
+  const name = 'conversation', scrollGesture = buildProductionGesture('scrollGesture', { name });
+  const gesture = buildProductionGesture('backGesture', { name, active: true, edgeOnly: true, scrollGesture, chatPanActivation,
+    backOverride() {}, swipe: { start() {}, update() {}, end() {}, cancel() {} } });
+  assert.equal(gesture.config.enabled, false);
+  assert.equal(scrollGesture.config.runOnJS, true);
+});

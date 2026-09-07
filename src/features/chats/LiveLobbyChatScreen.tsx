@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useSyncExternalStore } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from 'react';
 import { ActivityIndicator, FlatList, Keyboard, KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { GestureDetector, type NativeGesture } from 'react-native-gesture-handler';
 import type { LobbyMessage } from '../../api/lobbyTypes';
@@ -9,10 +9,14 @@ import { getLobbyInvalidation } from '../../api/lobbyInvalidation';
 import { colors, radius } from '../../theme';
 import { emptyLiveChat, LiveLobbyChatStore, validMessageBody } from './liveLobbyChat';
 import { LiveChatScroll } from './liveChatScroll';
+import { useLobbyRoles } from '../roles/useLobbyRoles';
+import { ChatRolePicker } from '../roles/ChatRolePicker';
+import { RoleBadge } from '../roles/RoleTile';
 
 /** Rendered inside the caller's details/inbox Modal, never a nested native modal. */
-export function LiveLobbyChatScreen({ lobbyId, title, onBack, onAccessLost, onSent, backLabel, scrollGesture }: {
+export function LiveLobbyChatScreen({ lobbyId, title, onBack, onAccessLost, onSent, backLabel, scrollGesture, onPopupBack }: {
   lobbyId: string; title: string; onBack: () => void; onAccessLost: () => void; onSent?: () => void; backLabel?: string; scrollGesture?: NativeGesture;
+  onPopupBack?: (back: (() => void) | null) => void;
 }) {
   const { lobbyApi, user, storageRecoveryRequired } = useAuth();
   const { t, language } = useI18n();
@@ -27,6 +31,9 @@ export function LiveLobbyChatScreen({ lobbyId, title, onBack, onAccessLost, onSe
     return () => { unsubscribe(); store.setContext(null, lobbyId); };
   }, [store, account, lobbyId, lobbyApi]);
   const current = snapshot.account === account && snapshot.lobbyId === lobbyId ? snapshot : emptyLiveChat(account, lobbyId);
+  const roles = useLobbyRoles(lobbyApi, current.blocked ? null : account, lobbyId, store.invalidate);
+  const popupBack = useRef<(() => void) | null>(null);
+  const registerPopupBack = useCallback((back: (() => void) | null) => { popupBack.current = back; onPopupBack?.(back); }, [onPopupBack]);
   const list = useRef<FlatList<LobbyMessage>>(null);
   const scroll = useMemo(() => new LiveChatScroll(), [account, lobbyId]);
   const messages = useMemo(() => [...current.items].reverse(), [current.items]);
@@ -44,17 +51,18 @@ export function LiveLobbyChatScreen({ lobbyId, title, onBack, onAccessLost, onSe
         </Pressable> : null}
       </View>}
       renderItem={({ item }) => <View testID={`live-message-${item.id}`} style={[styles.bubble, item.author.id === account && styles.own]}>
-        <Text style={styles.author}>{item.author.displayName} · @{item.author.handle}</Text>
+        <View style={styles.authorLine}><Text style={styles.author}>{item.author.displayName} · @{item.author.handle}</Text>
+          <RoleBadge name={roles.state.items.find(role => role.assignedUserId === item.author.id)?.name} /></View>
         <Text testID="live-chat-message-body" selectable style={styles.body}>{item.body}</Text>
         <Text style={styles.time}>{new Date(item.createdAt).toLocaleString(language === 'ru' ? 'ru-RU' : 'en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</Text>
       </View>} />;
   return <KeyboardAvoidingView style={styles.screen} behavior={Platform.OS === 'ios' ? 'padding' : Platform.OS === 'android' ? 'height' : undefined}>
     <View style={styles.header}>
-      <Pressable testID="live-chat-back" accessibilityRole="button" onPress={() => { Keyboard.dismiss(); onBack(); }}><Text style={styles.link}>{backLabel ?? t('liveChat.back')}</Text></Pressable>
+      <Pressable testID="live-chat-back" accessibilityRole="button" onPress={() => { Keyboard.dismiss(); if (popupBack.current) popupBack.current(); else onBack(); }}><Text style={styles.link}>{backLabel ?? t('liveChat.back')}</Text></Pressable>
       <Text accessibilityRole="header" style={styles.title} numberOfLines={2}>{title}</Text>
     </View>
     <Text style={styles.muted}>{t('liveChat.manual')}</Text>
-    {!current.blocked ? <Pressable testID="live-chat-refresh" accessibilityRole="button" disabled={current.loading || !account} onPress={() => void store.reload()}>
+    {!current.blocked ? <Pressable testID="live-chat-refresh" accessibilityRole="button" disabled={current.loading || !account} onPress={() => { void store.reload(); void roles.store.reload(); }}>
       <Text style={styles.link}>{t('lobbies.reload')}</Text>
     </Pressable> : null}
     {current.loading ? <ActivityIndicator testID="live-chat-loading" color={colors.text} /> : null}
@@ -64,6 +72,7 @@ export function LiveLobbyChatScreen({ lobbyId, title, onBack, onAccessLost, onSe
         onPress={() => void (current.error === 'liveChat.olderError' ? store.loadOlder() : store.reload())}><Text style={styles.link}>{t('auth.retry')}</Text></Pressable> : null}
     </View> : null}
     {current.loaded && !current.loading && !current.error && !current.items.length ? <Text testID="live-chat-empty" style={styles.muted}>{t('liveChat.empty')}</Text> : null}
+    {!current.blocked ? <ChatRolePicker key={`${account}/${lobbyId}`} store={roles.store} state={roles.state} onPopupBack={registerPopupBack} /> : null}
     {scrollGesture ? <GestureDetector gesture={scrollGesture} touchAction="pan-y">{history}</GestureDetector> : history}
     {current.sendError ? <View testID="live-chat-send-error" accessibilityLiveRegion="polite">
       <Text style={styles.muted}>{t(current.sendError)}</Text>
@@ -93,6 +102,7 @@ const styles = StyleSheet.create({
   older: { height: 48, alignItems: 'center', justifyContent: 'center' },
   bubble: { alignSelf: 'flex-start', maxWidth: '92%', backgroundColor: colors.background, borderWidth: 1, borderColor: colors.border, borderRadius: radius.medium, padding: 12, gap: 6 },
   own: { alignSelf: 'flex-end', backgroundColor: 'rgba(255,255,255,0.08)' }, author: { color: colors.muted, fontSize: 11 },
+  authorLine: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 6 },
   body: { color: colors.text, fontSize: 15, lineHeight: 22 }, time: { color: colors.muted, fontSize: 10, alignSelf: 'flex-end' },
   composer: { flexDirection: 'row', alignItems: 'center', gap: 12, borderTopWidth: 1, borderColor: colors.border, paddingTop: 10 },
   input: { flex: 1, minHeight: 44, maxHeight: 100, color: colors.text, backgroundColor: colors.background, borderRadius: radius.medium, padding: 12, fontSize: 15 },

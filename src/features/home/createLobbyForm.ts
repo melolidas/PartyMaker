@@ -2,6 +2,7 @@ import type { CreateLobbyInput, Lobby, LobbyCategory } from '../../api/lobbyType
 import { ApiClientError } from '../../api/errors';
 import { getRequestErrorTranslationKey } from '../../api/errorMessages';
 import type { TranslationKey } from '../../i18n/translations';
+import { MAX_LOBBY_ROLES, normalizeLobbyRole, type LobbyRoleInput } from '../../api/lobbyRoleTypes';
 
 export const CREATE_LOBBY_TIME_ZONE = 'Asia/Bishkek';
 export const LOBBY_CATEGORIES: LobbyCategory[] = ['DRINKS', 'GAMING', 'FOOD', 'SPORT', 'MOVIES', 'OUTDOORS'];
@@ -13,10 +14,10 @@ type LobbyBasicFields = Pick<LobbyFormFields, 'title' | 'description' | 'capacit
 // Kept only for editing legacy categorized lobbies; creation has no category.
 export type LobbyEditableFields = LobbyBasicFields & { category: LobbyCategory | null };
 export type LobbyFormState = {
-  account: string | null; fields: LobbyFormFields; submitting: boolean; error: TranslationKey | null;
+  account: string | null; fields: LobbyFormFields; roles: Required<LobbyRoleInput>[]; submitting: boolean; error: TranslationKey | null;
 };
 export function emptyLobbyForm(account: string | null = null): LobbyFormState {
-  return { account, submitting: false, error: null, fields: {
+  return { account, roles: [], submitting: false, error: null, fields: {
     title: '', description: '', date: '', time: '', capacity: '6', isOnline: false, venueName: '',
   } };
 }
@@ -76,6 +77,16 @@ export class CreateLobbyFormStore {
     if (!this.state.account || this.state.submitting) return;
     this.publish({ ...this.state, fields: { ...this.state.fields, ...field } });
   };
+  addRole = (name: string, description: string): boolean => {
+    if (!this.state.account || this.state.submitting || this.state.roles.length >= MAX_LOBBY_ROLES) return false;
+    const role = normalizeLobbyRole(name, description);
+    if (!role) return false;
+    this.publish({ ...this.state, roles: [...this.state.roles, role] }); return true;
+  };
+  removeRole = (index: number): void => {
+    if (!this.state.account || this.state.submitting) return;
+    this.publish({ ...this.state, roles: this.state.roles.filter((_role, i) => i !== index) });
+  };
   submit = async (): Promise<void> => {
     if (!this.state.account || this.state.submitting) return;
     const input = validateLobbyForm(this.state.fields);
@@ -83,7 +94,7 @@ export class CreateLobbyFormStore {
     const generation = this.generation;
     this.publish({ ...this.state, submitting: true, error: null });
     let lobby: Lobby;
-    try { lobby = await this.create(input); }
+    try { lobby = await this.create({ ...input, ...(this.state.roles.length ? { roles: this.state.roles.map(role => ({ ...role })) } : {}) }); }
     catch (error: unknown) {
       if (generation !== this.generation) return;
       const ambiguous = !(error instanceof ApiClientError) || error.code === 'NETWORK_ERROR'

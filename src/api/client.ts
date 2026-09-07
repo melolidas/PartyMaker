@@ -189,6 +189,14 @@ export class ApiClient {
     return this.protectedRequest<Lobby>(`/lobbies/${encodeURIComponent(id)}`, { method: 'GET' });
   }
 
+  listLobbyRoles(id: string): Promise<import('./lobbyRoleTypes').LobbyRoles> {
+    return this.protectedRequest(`/lobbies/${encodeURIComponent(id)}/roles`, { method: 'GET' });
+  }
+
+  changeLobbyRole(id: string, roleId: string, action: import('./lobbyRoleTypes').LobbyRoleAction): Promise<import('./lobbyRoleTypes').LobbyRoles> {
+    return this.protectedRequest(`/lobbies/${encodeURIComponent(id)}/roles/${encodeURIComponent(roleId)}/${action}`, { method: 'POST' });
+  }
+
   listLobbyRecommendations(): Promise<{ items: Lobby[] }> {
     return this.protectedRequest<{ items: Lobby[] }>('/lobbies/recommendations', { method: 'GET' });
   }

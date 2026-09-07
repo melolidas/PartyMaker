@@ -107,6 +107,7 @@ export class LobbiesService {
         isOnline: input.isOnline, venueName: input.venueName,
         organizerId: userId, status: 'PUBLISHED', minParticipants: 2,
         members: { create: { userId, role: 'ORGANIZER', status: 'JOINED' } },
+        activityRoles: { create: (input.roles ?? []).map((role, position) => ({ name: role.name, description: role.description ?? '', position })) },
       },
       select: lobbySelect(userId),
     });
@@ -197,6 +198,7 @@ export class LobbiesService {
           recipientId: lobby.organizerId, actorId: userId, lobbyId: id, type: 'LOBBY_JOINED',
         } });
       } else {
+        await tx.lobbyRoleAssignment.deleteMany({ where: { lobbyId: id, userId } });
         await tx.lobbyMember.update({ where: key, data: { status: 'LEFT', leftAt: now } });
       }
       const updated = await tx.lobby.findUniqueOrThrow({ where: { id }, select: lobbySelect(userId) });

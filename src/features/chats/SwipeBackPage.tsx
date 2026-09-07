@@ -11,11 +11,13 @@ type Props = {
   edgeOnly?: boolean;
   onClose: () => void;
   onBackReady: (close: () => void) => void;
+  backOverride?: () => void;
   children: (close: () => void, scrollGesture: NativeGesture) => ReactNode;
 };
 
 /** A native swipeable page, shared by chats and search. */
-export function SwipeBackPage({ name, active = true, edgeOnly = false, onClose, onBackReady, children }: Props) {
+export function SwipeBackPage({ name, active = true, edgeOnly = false, onClose, onBackReady, children, backOverride }: Props) {
+  const override = useRef(backOverride); override.current = backOverride;
   const { width } = useWindowDimensions();
   const translateX = useRef(new Animated.Value(0)).current;
   const closeCallback = useRef(onClose);
@@ -53,6 +55,7 @@ export function SwipeBackPage({ name, active = true, edgeOnly = false, onClose, 
   }), [translateX]);
 
   const close = useCallback(() => {
+    if (override.current) { override.current(); return; }
     Keyboard.dismiss();
     swipe.close();
   }, [swipe]);
@@ -91,7 +94,7 @@ export function SwipeBackPage({ name, active = true, edgeOnly = false, onClose, 
 
   const backGesture = useMemo(() => Gesture.Pan()
     .withTestId(`${name}-native-back`)
-    .enabled(active)
+    .enabled(active && !backOverride)
     // Pages with text inputs navigate from the edge only, leaving horizontal
     // text selection available in the composer and search field.
     .hitSlop(edgeOnly ? { left: 0, width: 28 } : 0)
@@ -106,7 +109,7 @@ export function SwipeBackPage({ name, active = true, edgeOnly = false, onClose, 
     .onUpdate(swipe.update)
     .onEnd(swipe.end)
     .onFinalize(() => swipe.cancel())
-    .onTouchesDown((event) => { if (event.numberOfTouches > 1) swipe.cancel(); }), [active, edgeOnly, name, scrollGesture, swipe]);
+    .onTouchesDown((event) => { if (event.numberOfTouches > 1) swipe.cancel(); }), [active, backOverride, edgeOnly, name, scrollGesture, swipe]);
 
   return (
     <GestureDetector gesture={backGesture} touchAction="pan-y" userSelect={edgeOnly ? 'auto' : 'none'}>

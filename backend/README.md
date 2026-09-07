@@ -254,6 +254,24 @@ Creation POST has no idempotency key or automatic network retry. A lost response
 
 `npm test` includes database-backed Lobby tests using isolated random-UUID fixtures, cleaned up by their own ids; it never resets or reseeds the database. The seed updates fixed records, so do not rerun it just to refresh Home dates in an existing database. Existing past seed events correctly produce an empty upcoming catalog. For a manual smoke test, create isolated future PUBLISHED fixtures with known ids and clean up only those fixtures; see the root README for list/details/empty/error-retry steps.
 
+## Optional lobby activity roles
+
+`POST /api/v1/lobbies` additionally accepts optional `roles: [{ name, description? }]`, at most 20 entries (an omitted/empty array preserves role-free creation). Names are trimmed, 1–10 Unicode code points; descriptions are trimmed, 0–50, default empty string. Null, NUL, wrong types, unknown fields and overlong values return **400 VALIDATION_FAILED**. Unicode counts are code points, not UTF-16 code units or grapheme clusters. Order of creation is retained. Lobby, all roles and ORGANIZER/JOINED membership are one nested atomic create. Existing category compatibility is unchanged; the frontend still omits category.
+
+Migration `20260907200000_lobby_activity_roles` adds ordered `LobbyActivityRole` definitions and separate `LobbyRoleAssignment` rows. It does not alter `LobbyMember.role`, rewrite old lobbies or assign anything automatically. Unique (lobbyId, roleId) and (lobbyId, userId) enforce one holder and one role per participant. Composite foreign keys require the role and membership to belong to the same lobby. Deleting a membership removes its assignment, not the role definition. Position uniqueness and a 0–19 CHECK bound each role list to 20. Review and apply with `npm run prisma:migrate:deploy`, then `npm run prisma:generate` and rebuild/restart; no reset/reseed or DATABASE_URL change.
+
+Bearer-protected endpoints (UUID paths; no query/body fields):
+
+- `GET /api/v1/lobbies/:id/roles` — current ordered roles, access check and bounded projection in one RepeatableRead snapshot.
+- `POST /api/v1/lobbies/:id/roles/:roleId/select` — take a free role, atomically replacing one's previous assignment. Repeating one's existing selection succeeds without another assignment. Occupied target: **409 LOBBY_ROLE_TAKEN**, with previous role preserved.
+- `POST /api/v1/lobbies/:id/roles/:roleId/release` — remove only this role's assignment owned by the Bearer user. Already released/held by another is a safe no-op. A delayed release of role A never removes the user's newer role B.
+
+All return **200** `{ items: [{ id, name, description, assignedUserId: string | null }] }`, maximum 20 in definition order. No full User/member/history, email, auth fields or storage paths. `assignedUserId` joins the bounded role map with already loaded message/roster user ids; it does not require all members or N+1 message queries.
+
+Access is exactly PUBLISHED + current JOINED (including after startsAt). Organizer access is through membership and has no assignment bypass. Missing/nonpublished lobby: **404 LOBBY_NOT_FOUND**; non-JOINED: **403 LOBBY_CHAT_FORBIDDEN**; foreign/missing role: **404 LOBBY_ROLE_NOT_FOUND**. Select/release use the same Lobby FOR UPDATE transaction as join/leave/send/cancel, and recheck access after locking. A real leave clears the assignment in that same transaction; joining/rejoining never assigns/restores a role. No chat permission or message history is changed by choosing a duty.
+
+The client validates action receipts and preserves the exact target for explicit uncertain-result retry. Role changes are current assignments rather than historical message snapshots. External changes are visible on manual Refresh/reopening. Role definitions are creation-only in this version; no published-role CRUD, polling, WebSocket or push is added.
+
 ## Lobby text messages (REST, no realtime)
 
 - `GET /api/v1/lobbies/:id/messages?limit=30&before=<opaque-cursor>` returns `{ items, nextCursor }`. Limit is an integer 1–50, default 30. Newest first: createdAt DESC, id DESC. Cursor encodes canonical UTC createdAt (four-digit AD year 0001–9999) and UUID; malformed cursors/queries, arrays, objects and unknown fields return 400 VALIDATION_FAILED. Lobby and deletedAt=null filters apply before pagination. Each GET checks access and reads history in one RepeatableRead transaction. A read begun before leave may finish; separate pages are not a frozen snapshot.

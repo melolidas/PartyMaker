@@ -7,6 +7,8 @@ import { useI18n } from '../../i18n/LocalizationProvider';
 import { colors, radius } from '../../theme';
 import { AvatarImage } from '../profile/AvatarImage';
 import { emptyMembers, LobbyMembersStore } from './lobbyMembers';
+import { useLobbyRoles } from '../roles/useLobbyRoles';
+import { RoleBadge } from '../roles/RoleTile';
 
 /** Page content only: the caller owns the existing details Modal. */
 export function LiveLobbyMembersScreen({ lobbyId, onBack, onAccessLost }: {
@@ -24,6 +26,7 @@ export function LiveLobbyMembersScreen({ lobbyId, onBack, onAccessLost }: {
     return () => { unsubscribe(); store.setContext(null, lobbyId); };
   }, [store, lobbyApi, account, lobbyId]);
   const current = snapshot.account === account && snapshot.id === lobbyId ? snapshot : emptyMembers(account, lobbyId);
+  const roles = useLobbyRoles(lobbyApi, current.error === 'access' ? null : account, lobbyId, store.invalidate);
   useEffect(() => {
     // Recheck details directly; never emit another invalidation/reload cycle.
     if (account && current.error === 'access') accessLost.current();
@@ -37,7 +40,7 @@ export function LiveLobbyMembersScreen({ lobbyId, onBack, onAccessLost }: {
       <Pressable testID="members-back" accessibilityRole="button" onPress={back}><Text style={styles.link}>{t('liveChat.back')}</Text></Pressable>
       <Text accessibilityRole="header" style={styles.title}>{t('members.title')}</Text>
     </View>
-    <Pressable testID="members-refresh" accessibilityRole="button" disabled={!account || busy} onPress={() => void store.reload()}>
+    <Pressable testID="members-refresh" accessibilityRole="button" disabled={!account || busy} onPress={() => { void store.reload(); void roles.store.reload(); }}>
       <Text style={styles.link}>{t('lobbies.reload')}</Text>
     </Pressable>
     {current.loading ? <ActivityIndicator testID="members-loading" color={colors.text} /> : null}
@@ -48,11 +51,13 @@ export function LiveLobbyMembersScreen({ lobbyId, onBack, onAccessLost }: {
       </Pressable>
     </View> : null}
     {account && !current.loading && !current.error && !current.items.length ? <Text testID="members-empty" style={styles.muted}>{t('members.empty')}</Text> : null}
+    {roles.state.error ? <Pressable testID="members-roles-retry" accessibilityRole="button" onPress={() => void roles.store.reload()}><Text style={styles.muted}>{t('roles.loadError')} · {t('auth.retry')}</Text></Pressable> : null}
     <FlatList testID="members-list" style={styles.list} contentContainerStyle={styles.content} data={current.items} keyExtractor={row => row.user.id}
       renderItem={({ item }) => <View testID={`member-${item.user.id}`} style={styles.row}>
         <AvatarImage avatar={item.user.avatar} size={48} reloadKey={imageAttempt} />
         <View style={styles.body}>
-          <Text style={styles.name}>{item.user.displayName}</Text>
+          <View style={styles.badges}><Text style={styles.name}>{item.user.displayName}</Text>
+            <RoleBadge name={roles.state.items.find(role => role.assignedUserId === item.user.id)?.name} /></View>
           <Text style={styles.muted}>@{item.user.handle}</Text>
           <View style={styles.badges}>
             {item.isOrganizer ? <Text style={styles.badge}>{t('members.organizer')}</Text> : null}

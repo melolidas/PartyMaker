@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { getLobbyInvalidation } from '../../api/lobbyInvalidation';
 import { emptyLobbyDetails, LobbyDetailsStore, membershipAction } from './lobbyDetails';
@@ -19,6 +19,8 @@ export function LiveLobbyDetails({ id, onClose, onCancelled }: { id: string; onC
   const account = storageRecoveryRequired ? null : user?.id ?? null;
   const [chat, setChat] = useState<{ account: string; id: string; title: string } | null>(null);
   const chatOpen = !!account && chat?.account === account && chat.id === id;
+  const chatPopupBack = useRef<(() => void) | null>(null);
+  const registerChatPopupBack = useCallback((back: (() => void) | null) => { chatPopupBack.current = back; }, []);
   const [members, setMembers] = useState<{ account: string; id: string } | null>(null);
   const membersOpen = !!account && members?.account === account && members.id === id;
   const [edit, setEdit] = useState<{ account: string; id: string } | null>(null);
@@ -33,6 +35,7 @@ export function LiveLobbyDetails({ id, onClose, onCancelled }: { id: string; onC
     const unsubscribe = getLobbyInvalidation(lobbyApi).subscribe(() => { void store.reload(); });
     store.setContext(account, id);
     notified.current = false;
+    chatPopupBack.current = null;
     setChat(null);
     setMembers(null);
     setEdit(null);
@@ -49,15 +52,18 @@ export function LiveLobbyDetails({ id, onClose, onCancelled }: { id: string; onC
   const lobby = current.lobby;
   const intent = lobby ? membershipAction(lobby, now) : null;
   const busy = current.loading || current.mutating;
-  const backToDetails = () => { activeEdit.current = null; setChat(null); setMembers(null); setEdit(null); void store.reload(); };
+  const backToDetails = () => { chatPopupBack.current = null; activeEdit.current = null; setChat(null); setMembers(null); setEdit(null); void store.reload(); };
   const currentEdit = () => !!edit && activeEdit.current === edit && route.current.account === account && route.current.id === id;
-  return <Modal visible transparent animationType="fade" onRequestClose={chatOpen || membersOpen || editOpen ? backToDetails : onClose}>
+  return <Modal visible transparent animationType="fade" onRequestClose={() => {
+    if (chatOpen && chatPopupBack.current) chatPopupBack.current();
+    else if (chatOpen || membersOpen || editOpen) backToDetails(); else onClose();
+  }}>
     <View style={styles.overlay}>
       <View style={[styles.sheet, (chatOpen || membersOpen || editOpen) && styles.chatSheet]}>
         {editOpen ? <EditLobbyScreen lobbyId={id} onBack={backToDetails} onAccessLost={() => { if (currentEdit()) void store.reload(); }}
           onSaved={updated => { if (!currentEdit()) return; activeEdit.current = null; store.acceptEdited(updated); setEdit(null); if (account) setEditReceipt({ account, id }); }} />
           : membersOpen ? <LiveLobbyMembersScreen lobbyId={id} onBack={backToDetails} onAccessLost={() => void store.reload()} />
-          : chatOpen ? <LiveLobbyChatScreen lobbyId={id} title={chat.title} onBack={backToDetails} onAccessLost={() => void store.reload()} /> : <>
+          : chatOpen ? <LiveLobbyChatScreen lobbyId={id} title={chat.title} onBack={backToDetails} onPopupBack={registerChatPopupBack} onAccessLost={() => void store.reload()} /> : <>
         <View style={styles.header}><Text accessibilityRole="header" style={styles.title}>{current.cancelTarget?.title ?? lobby?.title ?? t('lobbies.details')}</Text>
           <Pressable accessibilityRole="button" accessibilityLabel={t('common.close')} onPress={onClose}><Text style={styles.close}>{t('common.close')}</Text></Pressable>
         </View>

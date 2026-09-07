@@ -24,6 +24,8 @@ const activityLogic = require('../.expo/lobby-tests/features/activity/activity.j
 const countLogic = require('../.expo/lobby-tests/features/activity/unreadCount.js');
 const historyLogic = require('../.expo/lobby-tests/features/profile/lobbyHistory.js');
 const { getNotificationInvalidation } = require('../.expo/lobby-tests/api/notificationInvalidation.js');
+const roleLogic = require('../.expo/lobby-tests/features/roles/lobbyRoles.js');
+const roleTypes = require('../.expo/lobby-tests/api/lobbyRoleTypes.js');
 
 const lobby = {
   id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', title: 'demo.pizza', description: 'My own description <not markup>',
@@ -41,7 +43,7 @@ async function flush() { for (let i = 0; i < 16; i++) await Promise.resolve(); }
 
 // Runs actual component handlers/effects with a minimal React/native host.
 // No HTTP or component logic is copied into the harness.
-function host(auth) {
+function host(auth, globals = {}) {
   const slots = [];
   let cursor = 0;
   let effects = [];
@@ -103,6 +105,15 @@ function host(auth) {
       './SwipeBackPage': { SwipeBackPage: 'SwipeBackPage' },
       './LiveChatsScreen': { LiveChatsScreen: 'LiveChatsScreen' },
       './LiveLobbyChatScreen': { LiveLobbyChatScreen: 'LiveLobbyChatScreen' },
+      '../roles/useLobbyRoles': { useLobbyRoles: () => ({ store: { reload() {} }, state: roleLogic.emptyRoles(null, '') }) },
+      '../roles/ChatRolePicker': { ChatRolePicker: 'ChatRolePicker' },
+      '../roles/RoleTile': { RoleBadge: 'RoleBadge' },
+      '../features/roles/DraftLobbyRoles': { DraftLobbyRoles: 'DraftLobbyRoles' },
+      './lobbyRoles': roleLogic,
+      '../../api/lobbyRoleTypes': roleTypes,
+      './RoleTile': { RoleTile: 'RoleTile' },
+      './RolePopup': { RolePopup: 'RolePopup' },
+      '../../components/icons/MasqueradeMask': { MasqueradeMask: 'MasqueradeMask' },
       'expo-modules-core': { uuid: { v4: () => 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb' } },
       './HomeExperienceProvider': { useHomeClock: () => Date.now() },
       '../features/home/HomeLobbyFeed': { HomeLobbyFeed: 'HomeLobbyFeed' },
@@ -117,7 +128,7 @@ function host(auth) {
     const code = ts.transpileModule(readFileSync(path.join(__dirname, '..', file), 'utf8'), {
       compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020, jsx: ts.JsxEmit.ReactJSX },
     }).outputText;
-    vm.runInNewContext(code + (expose ? `\nexports.${expose} = ${expose};` : ''), { exports, require: name => { assert.ok(name in mocks, name); return mocks[name]; } });
+    vm.runInNewContext(code + (expose ? `\nexports.${expose} = ${expose};` : ''), { ...globals, exports, require: name => { assert.ok(name in mocks, name); return mocks[name]; } });
     return exports;
   }
   return {
@@ -372,6 +383,184 @@ test('late fallback first/page reads and failures cannot survive tab/account/log
     if (change !== 'unmount') assert.deepEqual(r.cards().map(n => n.props.lobby.id), ['tab', 'account', 'refresh'].includes(change) ? ['new'] : []);
     r.unmount(); const before = calls; getLobbyInvalidation(auth.lobbyApi).invalidate(); assert.equal(calls, before);
   }
+});
+
+const rolesReply = (assigned = null) => ({ items: [
+  { id: 'role-a', name: 'Ведущий', description: 'Ведёт игру', assignedUserId: assigned },
+  { id: 'role-b', name: 'Музыкант', description: '', assignedUserId: null },
+] });
+
+test('optional role draft is Unicode-aware, local until creation, ordered and omitted when empty', async () => {
+  const sent = [], store = new CreateLobbyFormStore(async input => { sent.push(input); return lobby; }, () => {});
+  store.setAccount('A'); store.update(draft());
+  assert.equal(store.addRole('  ', ''), false);
+  assert.equal(store.addRole('🎭'.repeat(11), ''), false); assert.equal(store.addRole('ok', '𐐀'.repeat(51)), false);
+  assert.equal(store.addRole('a\u0000', ''), false);
+  assert.equal(store.addRole(` ${'🎭'.repeat(10)} `, ` ${'𐐀'.repeat(50)} `), true);
+  assert.equal(store.addRole('Музыкант', ''), true); assert.equal(sent.length, 0);
+  store.removeRole(0); await store.submit();
+  assert.deepEqual(sent[0].roles, [{ name: 'Музыкант', description: '' }]); assert.equal(Object.hasOwn(sent[0], 'category'), false);
+  store.setAccount(null); store.setAccount('B'); assert.deepEqual(store.getSnapshot().roles, []);
+  store.update(draft()); await store.submit(); assert.equal(Object.hasOwn(sent[1], 'roles'), false);
+});
+
+test('actual draft role popup adds once, shows read-only details, removes, cancels and wraps complete tiles in RU/EN', () => {
+  for (const language of ['ru','en']) {
+    const h = host({}), t = createTranslator(language), form = new CreateLobbyFormStore(async () => lobby, () => {}); form.setAccount('A');
+    const { DraftLobbyRoles } = h.load('src/features/roles/DraftLobbyRoles.tsx', { '../../i18n/LocalizationProvider': { useI18n: () => ({ t, language }) } });
+    const render = () => h.render(DraftLobbyRoles, { roles: form.getSnapshot().roles, editable: true, onAdd: form.addRole, onRemove: form.removeRole });
+    const open = () => byId(render(), 'draft-role-add').props.onPress();
+    assert.equal(byId(render(), 'draft-role-grid').props.style.flexWrap, 'wrap');
+    open(); byId(render(), 'role-name').props.onChangeText('  🎭🎭  '); byId(render(), 'role-description').props.onChangeText('  Игра  ');
+    assert.equal(texts(byId(render(), 'role-name-count')), '2 /10');
+    const confirm = byId(render(), 'draft-role-confirm').props.onPress; confirm(); confirm();
+    assert.equal(form.getSnapshot().roles.length, 1); assert.equal(nodes(render()).some(n => n.type === 'RolePopup'), false);
+    byId(render(), 'draft-role-0').props.onPress(); assert.equal(byId(render(), 'role-name').props.editable, false);
+    assert.equal(byId(render(), 'role-name').props.value, '🎭🎭'); assert.equal(byId(render(), 'role-description').props.value, 'Игра');
+    assert.equal(texts(byId(render(), 'draft-role-confirm')), t('roles.remove')); byId(render(), 'draft-role-confirm').props.onPress();
+    assert.equal(form.getSnapshot().roles.length, 0);
+    open(); byId(render(), 'role-name').props.onChangeText('Discard'); const oldConfirm = byId(render(), 'draft-role-confirm').props.onPress;
+    nodes(render()).find(n => n.type === 'RolePopup').props.onBack(); oldConfirm(); assert.equal(form.getSnapshot().roles.length, 0);
+    assert.equal(nodes(byId(render(),'draft-role-grid')).filter(n => n.type === 'RoleTile')[0].props.add, true);
+    h.unmount();
+  }
+});
+
+test('mask and role tiles reuse white SVG, 48px outlined circle and the navigation plus without truncated labels', () => {
+  const h = host({}), { RoleTile, RoleBadge } = h.load('src/features/roles/RoleTile.tsx');
+  const add = h.render(RoleTile, { label: 'Добавить роль', add: true, onPress() {} });
+  const circle = nodes(add).find(n => n.type === 'View'); assert.equal(circle.props.style.width, 48); assert.equal(circle.props.style.height,48);
+  assert.equal(circle.props.style.borderWidth,1); assert.equal(circle.props.style.backgroundColor,'transparent');
+  const plus = nodes(add).find(n=>n.type==='Feather'); assert.equal(plus.props.name,'plus'); assert.equal(plus.props.size,30); assert.equal(plus.props.color,'#FFFFFF');
+  assert.equal(nodes(add).find(n=>n.type==='Text').props.numberOfLines,undefined);
+  assert.equal(h.render(RoleBadge,{}),null);
+  const { MasqueradeMask } = h.load('src/components/icons/MasqueradeMask.tsx', { 'react-native-svg': { __esModule: true, default:'Svg',Path:'Path' } });
+  const mask = h.render(MasqueradeMask, {}), path = nodes(mask).find(n=>n.type==='Path');
+  assert.equal(mask.type,'Svg'); assert.equal(path.props.fill,'#FFFFFF'); assert.equal(path.props.fillRule,'evenodd'); assert.equal((path.props.d.match(/M/g)||[]).length,3,'silhouette plus two eye cutouts');
+  h.unmount();
+});
+
+test('actual Create screen places role draft before submit, retains it on failure and resets it for another account', async () => {
+  const sent=[], auth=feedAuth({createLobby:async input=>{sent.push(input);throw Error('offline');}}),h=host(auth);
+  const {CreateLobbyScreen}=h.load('src/screens/CreateLobbyScreen.tsx',screenMocks(auth)), props={onClose(){},onCreated(){assert.fail('no success');}};
+  const render=()=>h.render(CreateLobbyScreen,props);render();
+  for(const [id,value] of Object.entries({title:'Title',description:'Text',date:'2201-01-01',time:'19:00',venue:'Venue'}))byId(render(),'create-'+id).props.onChangeText(value);
+  const roles=()=>nodes(render()).find(n=>n.type==='DraftLobbyRoles'); roles().props.onAdd('Мастер','Описание');
+  const order=nodes(render());assert.ok(order.findIndex(n=>n.type==='DraftLobbyRoles')<order.findIndex(n=>n.props?.testID==='create-submit'));
+  byId(render(),'create-submit').props.onPress();await flush();assert.equal(sent[0].roles[0].name,'Мастер');assert.equal(roles().props.roles.length,1);
+  const staleAdd=roles().props.onAdd;auth.user={id:'B'};render();assert.equal(roles().props.roles.length,0);assert.equal(staleAdd('Old',''),false);h.unmount();
+});
+
+test('role store confirms assignment only after valid POST; double taps, atomic switch and named release use fixed targets', async () => {
+  let rows=rolesReply(), next=deferred();const calls=[];
+  const store=new roleLogic.LobbyRolesStore({listLobbyRoles:async()=>rows,changeLobbyRole:(id,roleId,action)=>{calls.push({id,roleId,action});return next.promise;}});
+  store.setContext('A',lobby.id);await flush();const first=store.choose('role-a','select');store.choose('role-a','select');store.choose('role-b','select');
+  assert.equal(calls.length,1);assert.equal(store.getSnapshot().items[0].assignedUserId,null);
+  rows=rolesReply('A');next.resolve(rows);await first;assert.equal(store.getSnapshot().items[0].assignedUserId,'A');assert.equal(store.getSnapshot().pending,null);
+  next=deferred();const second=store.choose('role-b','select');next.reject(new ApiClientError({statusCode:409,code:'LOBBY_ROLE_TAKEN',message:'taken'}));await second;
+  assert.equal(store.getSnapshot().items[0].assignedUserId,'A');assert.equal(store.getSnapshot().error,'roles.takenError');
+  next=deferred();const release=store.choose('role-a','release');assert.deepEqual(calls.at(-1),{id:lobby.id,roleId:'role-a',action:'release'});
+  next.resolve(rolesReply());await release;assert.equal(store.getSnapshot().items[0].assignedUserId,null);
+});
+
+test('lost role POST keeps explicit retry target through GET without false success; late pre-action GET cannot undo receipt', async () => {
+  let rows=rolesReply(), read=deferred(), useLate=false, fail=true;const calls=[];
+  const store=new roleLogic.LobbyRolesStore({listLobbyRoles:()=>useLate?read.promise:Promise.resolve(rows),changeLobbyRole:async(id,roleId,action)=>{calls.push({id,roleId,action});rows=rolesReply('A');if(fail)throw Error('lost');return rows;}});
+  store.setContext('A',lobby.id);await flush();await store.choose('role-a','select');assert.equal(store.getSnapshot().error,'roles.unconfirmed');
+  await store.reload();assert.equal(store.getSnapshot().items[0].assignedUserId,'A');assert.ok(store.getSnapshot().pending);assert.equal(store.getSnapshot().error,'roles.unconfirmed');
+  useLate=true;const stale=store.reload();fail=false;await store.retry();read.resolve(rolesReply());await stale;
+  assert.deepEqual(calls[0],calls[1]);assert.equal(store.getSnapshot().pending,null);assert.equal(store.getSnapshot().error,null);assert.equal(store.getSnapshot().items[0].assignedUserId,'A');
+});
+
+test('roles reject malformed or wrong-target confirmations; no automatic retry and chat-independent error', async () => {
+  for(const reply of [null,{}, {items:[]}, rolesReply(), {items:[{...rolesReply().items[0],assignedUserId:'other'}]}]){
+    let calls=0;const store=new roleLogic.LobbyRolesStore({listLobbyRoles:async()=>rolesReply(),changeLobbyRole:async()=>{calls++;return reply;}});
+    store.setContext('A',lobby.id);await flush();await store.choose('role-a','select');await flush();assert.equal(calls,1);assert.equal(store.getSnapshot().error,'roles.unconfirmed');assert.ok(store.getSnapshot().pending);
+  }
+});
+
+test('role reads/mutations discard late responses after account/lobby/logout/unmount/invalidation and blocked access cannot send', async () => {
+  for(const phase of ['read','write'])for(const transition of ['account','lobby','logout','invalidate']){
+    let next=deferred(),fresh=false;const store=new roleLogic.LobbyRolesStore({listLobbyRoles:()=>fresh?Promise.resolve(rolesReply('B')):phase==='read'?next.promise:Promise.resolve(rolesReply()),changeLobbyRole:()=>next.promise});
+    store.setContext('A',lobby.id);await flush();if(phase==='write')void store.choose('role-a','select');fresh=true;
+    if(transition==='account')store.setContext('B',lobby.id);if(transition==='lobby')store.setContext('A','next-lobby');if(transition==='logout')store.setContext(null,lobby.id);if(transition==='invalidate')store.invalidate();
+    await flush();next.resolve(rolesReply('A'));await flush();assert.equal(store.getSnapshot().items.some(r=>r.assignedUserId==='A'),false);
+  }
+  for(const status of [403,404]){
+    let denied=0,posts=0;const store=new roleLogic.LobbyRolesStore({listLobbyRoles:async()=>{throw chatError(status);},changeLobbyRole:async()=>{posts++;return rolesReply();}},()=>denied++);
+    store.setContext('A',lobby.id);await flush();await store.choose('role-a','select');assert.equal(denied,1);assert.equal(posts,0);assert.equal(store.getSnapshot().blocked,true);
+  }
+});
+
+function rolePickerHost(store,language='ru',onPopupBack=()=>{}){
+  const h=host({}),{ChatRolePicker}=h.load('src/features/roles/ChatRolePicker.tsx',{'../../i18n/LocalizationProvider':{useI18n:()=>({t:createTranslator(language),language})}});
+  return {...h,render:()=>h.render(ChatRolePicker,{store,state:store.getSnapshot(),onPopupBack})};
+}
+test('actual chat role picker grid/details/taken/own/retry/back work in one overlay in RU/EN',async()=>{
+  for(const language of ['ru','en']){
+    let rows=rolesReply(),fail=false,back=null;rows.items[1].assignedUserId='B';
+    const store=new roleLogic.LobbyRolesStore({listLobbyRoles:async()=>rows,changeLobbyRole:async(_id,roleId,action)=>{if(fail)throw Error('network');rows={items:rows.items.map(r=>r.id===roleId?{...r,assignedUserId:action==='select'?'A':null}:r)};return rows;}});
+    store.setContext('A',lobby.id);await flush();const c=rolePickerHost(store,language,fn=>back=fn),t=createTranslator(language);
+    byId(c.render(),'chat-choose-role').props.onPress();assert.ok(byId(c.render(),'chat-role-grid'));assert.equal(byId(c.render(),'chat-role-grid').props.style.flexWrap,'wrap');
+    byId(c.render(),'chat-role-role-b').props.onPress();assert.equal(texts(byId(c.render(),'role-taken')),t('roles.taken'));assert.equal(byId(c.render(),'role-action'),undefined);
+    back();c.render();byId(c.render(),'chat-role-role-a').props.onPress();assert.equal(texts(byId(c.render(),'chat-role-description')),'Ведёт игру');
+    byId(c.render(),'role-action').props.onPress();await flush();assert.equal(texts(byId(c.render(),'role-action')),t('roles.release'));
+    fail=true;byId(c.render(),'role-action').props.onPress();await flush();assert.ok(byId(c.render(),'role-action-retry'));assert.equal(byId(c.render(),'role-action').props.disabled,true);
+    fail=false;byId(c.render(),'role-action-retry').props.onPress();await flush();assert.equal(texts(byId(c.render(),'role-action')),t('roles.choose'));
+    back();c.render();assert.ok(byId(c.render(),'chat-role-grid'));back();c.render();assert.equal(back,null);assert.equal(nodes(c.render()).some(n=>n.type==='Modal'),false);c.unmount();
+  }
+  const empty=new roleLogic.LobbyRolesStore({listLobbyRoles:async()=>({items:[]})});empty.setContext('A',lobby.id);await flush();const h=rolePickerHost(empty);assert.equal(byId(h.render(),'chat-choose-role'),undefined);h.unmount();
+});
+
+test('actual role popup captures Escape/Back, scrolls vertically and only standalone creation adds a Modal',()=>{
+  let backs=0,removed=0;const listeners={};
+  const h=host({}, {window:{addEventListener:(type,fn,capture)=>{assert.equal(capture,true);listeners[type]=fn;},removeEventListener:()=>removed++}});
+  const {RolePopup}=h.load('src/features/roles/RolePopup.tsx');const props={label:'Роли',onBack:()=>backs++,children:'Fields'};
+  const tree=h.render(RolePopup,props);assert.equal(nodes(tree).some(n=>n.type==='Modal'),false);assert.ok(nodes(tree).find(n=>n.type==='ScrollView'));
+  let prevented=0;
+  const event=type=>({type,key:'Escape',preventDefault:()=>prevented++,stopImmediatePropagation:()=>prevented++});
+  listeners.keydown(event('keydown'));assert.equal(backs,0,'keydown cannot navigate before the parent Modal keyup');
+  listeners.keyup(event('keyup'));assert.equal(backs,1);assert.equal(prevented,4,'both events are consumed before parent Modal');
+  const standalone=h.render(RolePopup,{...props,standalone:true});assert.equal(standalone.type,'Modal');standalone.props.onRequestClose();assert.equal(backs,2);h.unmount();assert.equal(removed,2);
+});
+
+test('actual chat/member badges use one bounded current role map, refresh without losing draft or confirmed history',async()=>{
+  let rows=rolesReply('A'),reads=0;
+  const auth=feedAuth({listLobbyRoles:async()=>{reads++;return rows;},changeLobbyRole:async()=>rows,
+    listLobbyMessages:async()=>page([message()]),sendLobbyMessage:async()=>message(),listLobbyMembers:async()=>page([member('A')])});
+  const h=host(auth),hook=h.load('src/features/roles/useLobbyRoles.ts'),{LiveLobbyChatScreen}=h.load('src/features/chats/LiveLobbyChatScreen.tsx',{'../roles/useLobbyRoles':hook});
+  const props={lobbyId:lobby.id,title:'Real chat',onBack(){},onAccessLost(){}};const render=()=>h.render(LiveLobbyChatScreen,props);render();await flush();
+  byId(render(),'live-chat-draft').props.onChangeText('Keep draft');
+  const bubble=()=>byId(render(),'live-chat-history').props.renderItem({item:message()});assert.equal(nodes(bubble()).find(n=>n.type==='RoleBadge').props.name,'Ведущий');
+  const picker=nodes(render()).find(n=>n.type==='ChatRolePicker');rows={items:[{...rows.items[0],assignedUserId:null},{...rows.items[1],assignedUserId:'A'}]};
+  await picker.props.store.choose('role-b','select');assert.equal(nodes(bubble()).find(n=>n.type==='RoleBadge').props.name,'Музыкант');assert.equal(byId(render(),'live-chat-draft').props.value,'Keep draft');
+  rows=rolesReply();byId(render(),'live-chat-refresh').props.onPress();await flush();assert.equal(nodes(bubble()).find(n=>n.type==='RoleBadge').props.name,undefined);
+  assert.equal(history(render()).length,1);assert.equal(reads,2,'not one read per message');
+  const m=host(auth),mh=m.load('src/features/roles/useLobbyRoles.ts'),{LiveLobbyMembersScreen}=m.load('src/features/home/LiveLobbyMembersScreen.tsx',{'../roles/useLobbyRoles':mh});
+  rows=rolesReply('A');const members=()=>m.render(LiveLobbyMembersScreen,{lobbyId:lobby.id,onBack(){},onAccessLost(){}});members();await flush();
+  const row=byId(members(),'members-list').props.renderItem({item:member('A')});assert.equal(nodes(row).find(n=>n.type==='RoleBadge').props.name,'Ведущий');
+  auth.user={id:'B'};render();assert.equal(byId(render(),'live-chat-draft').props.value,'');h.unmount();m.unmount();
+});
+
+test('role errors do not destroy chat draft/pending send; closing discards old role writes',async()=>{
+  let write=deferred(),send=deferred(),readFail=false;
+  const auth=feedAuth({listLobbyRoles:async()=>{if(readFail)throw Error('roles offline');return rolesReply();},changeLobbyRole:()=>write.promise,
+    listLobbyMessages:async()=>page(),sendLobbyMessage:()=>send.promise});
+  const h=host(auth),hook=h.load('src/features/roles/useLobbyRoles.ts'),{LiveLobbyChatScreen}=h.load('src/features/chats/LiveLobbyChatScreen.tsx',{'../roles/useLobbyRoles':hook});
+  const props={lobbyId:lobby.id,title:'chat',onBack(){},onAccessLost(){}};const render=()=>h.render(LiveLobbyChatScreen,props);render();await flush();
+  byId(render(),'live-chat-draft').props.onChangeText('Keep sending');byId(render(),'live-chat-send').props.onPress();readFail=true;
+  const picker=nodes(render()).find(n=>n.type==='ChatRolePicker');await picker.props.store.reload();assert.equal(byId(render(),'live-chat-draft').props.value,'Keep sending');assert.ok(byId(render(),'live-chat-sending'));
+  void picker.props.store.choose('role-a','select');h.unmount();write.resolve(rolesReply('A'));send.resolve(message());await flush();assert.equal(picker.props.store.getSnapshot().account,null);assert.deepEqual(picker.props.store.getSnapshot().items,[]);
+});
+
+test('existing ApiClient role POST keeps bounded auth refresh retry and never retries a network failure',async()=>{
+  const calls=[];let rejected=false,offline=false;
+  const client=creationClient(async(url,init)=>{calls.push([url,init]);if(url.endsWith('/auth/login'))return authReply('a');if(url.endsWith('/auth/refresh'))return authReply('b');
+    if(offline)throw Error('offline');if(!rejected){rejected=true;return new Response(JSON.stringify({error:{code:'INVALID_ACCESS_TOKEN',message:'expired'}}),{status:401});}return new Response(JSON.stringify(rolesReply('A')));});
+  await client.login({email:'a@example.test',password:'test'});await client.changeLobbyRole(lobby.id,'role-a','select');
+  assert.equal(calls.filter(([url])=>url.endsWith('/role-a/select')).length,2);assert.equal(calls.filter(([url])=>url.endsWith('/auth/refresh')).length,1);
+  assert.equal(calls.at(-1)[1].headers.Authorization,'Bearer access-b');assert.equal(calls.at(-1)[1].body,undefined);
+  offline=true;const before=calls.length;await assert.rejects(client.changeLobbyRole(lobby.id,'role-a','release'));assert.equal(calls.length,before+1);
 });
 
 const historyItem = (id = 'past') => ({ id, title: 'demo.pizza <real title>', description: 'Plain <description>', category: 'FOOD',
@@ -2260,12 +2449,26 @@ test('actual details -> live chat -> same details uses one Modal and updates acc
   byId(render(), 'live-chat-open').props.onPress();
   const chat = nodes(render()).find(n => n.type === 'LiveLobbyChatScreen');
   assert.equal(chat.props.lobbyId, lobby.id); assert.equal(nodes(render()).filter(n => n.type === 'Modal').length, 1);
+  let popupBacks=0;chat.props.onPopupBack(()=>popupBacks++);
+  nodes(render()).find(n=>n.type==='Modal').props.onRequestClose();assert.equal(popupBacks,1);
+  assert.ok(nodes(render()).find(n=>n.type==='LiveLobbyChatScreen'),'system Back first belongs to role popup');
+  chat.props.onPopupBack(null);
   chat.props.onBack(); await flush(); assert.equal(nodes(render()).find(n => n.type === 'LiveLobbyChatScreen'), undefined);
   assert.equal(texts(byId(render(), 'live-lobby-description')), lobby.description); assert.equal(closes, 0);
   byId(render(), 'live-chat-open').props.onPress(); joined = false;
   nodes(render()).find(n => n.type === 'LiveLobbyChatScreen').props.onAccessLost(); await flush();
   nodes(render()).find(n => n.type === 'Modal').props.onRequestClose(); await flush();
   assert.equal(byId(render(), 'live-chat-open').props.disabled, true); assert.ok(reads >= 3); h.unmount();
+});
+
+test('inbox parent Modal and swipe Back route to role popup first, then return to the same list',async()=>{
+  const c=mountInbox({listChats:async()=>page([chatRow()])});c.screen();await flush();c.rowButton('chat-a').props.onPress();
+  let backs=0;c.conversation().props.onPopupBack(()=>backs++);
+  let modal=c.modal();nodes(modal).find(n=>n.type==='Modal').props.onRequestClose();assert.equal(backs,1);assert.ok(c.conversation());
+  let swipe=nodes(c.modal()).find(n=>n.type==='SwipeBackPage'&&n.props.name==='conversation');swipe.props.backOverride();assert.equal(backs,2);
+  assert.equal(nodes(c.modal()).filter(n=>n.type==='Modal').length,1);
+  c.conversation().props.onPopupBack(null);swipe=nodes(c.modal()).find(n=>n.type==='SwipeBackPage'&&n.props.name==='conversation');assert.equal(swipe.props.backOverride,undefined);
+  c.conversation().props.onBack();await flush();assert.equal(c.conversation(),null);assert.equal(c.rows().length,1);c.h.unmount();
 });
 test('message transport encodes cursor, retains Bearer/one auth refresh and never retries uncertain POST', async () => {
   const calls = []; let postCount = 0, refreshes = 0;

@@ -143,6 +143,7 @@ model Lobby {
   moments         Moment[]
   invites         LobbyInvite[]
   notifications   Notification[]
+  activityRoles   LobbyActivityRole[]
 
   @@index([status, startsAt])
   @@index([organizerId, status])
@@ -157,9 +158,35 @@ model LobbyMember {
   leftAt   DateTime?         @map("left_at") @db.Timestamptz(3)
   lobby    Lobby             @relation(fields: [lobbyId], references: [id], onDelete: Cascade)
   user     User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  activityAssignment LobbyRoleAssignment?
 
   @@id([lobbyId, userId])
   @@index([userId, status])
+}
+
+/// Optional duties, unrelated to LobbyMember.role authorization.
+model LobbyActivityRole {
+  id          String @id @default(uuid()) @db.Uuid
+  lobbyId     String @map("lobby_id") @db.Uuid
+  position    Int
+  name        String @db.VarChar(10)
+  description String @default("") @db.VarChar(50)
+  lobby       Lobby @relation(fields: [lobbyId], references: [id], onDelete: Cascade)
+  assignment  LobbyRoleAssignment?
+
+  @@unique([lobbyId, id])
+  @@unique([lobbyId, position])
+}
+
+model LobbyRoleAssignment {
+  lobbyId String @map("lobby_id") @db.Uuid
+  roleId  String @map("role_id") @db.Uuid
+  userId  String @map("user_id") @db.Uuid
+  activityRole LobbyActivityRole @relation(fields: [lobbyId, roleId], references: [lobbyId, id], onDelete: Cascade)
+  member LobbyMember @relation(fields: [lobbyId, userId], references: [lobbyId, userId], onDelete: Cascade)
+
+  @@id([lobbyId, roleId])
+  @@unique([lobbyId, userId])
 }
 
 model LobbyMedia {
